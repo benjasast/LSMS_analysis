@@ -1,0 +1,280 @@
+---
+title: "OOPs Analysis"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_data, include = FALSE}
+library(tidyverse)
+library(magrittr)
+library(knitr)
+library(kableExtra)
+
+
+rm(list=ls())
+
+# Load data
+df <- read.csv2("LSMScompilation_tidy.csv")
+tab_recall <- read.csv2("LSMScompilation_recall_nitems.csv")
+```
+
+## Search Strategy
+
+Our search started at the World Bank’s Microdata Library, where we looked for micro-surveys from the 
+Living Standards Measurement Surveys (LSMS) program. We collected data from 80 surveys from the program wich were publicly available.
+
+```{r filter_surveys, include=FALSE}
+
+# get list of surveys with both modules
+surveys_bothmodules <- tab_recall %>% 
+  select(survey) %>% 
+  group_by(survey) %>% 
+  mutate(count = n()) %>% 
+  filter(count>1) %>% 
+  select(survey) %>% 
+  distinct()
+
+# Keep only observations from selected surveys in df
+df_bothm <- df %>% # df with surveys from both modules
+  inner_join(surveys_bothmodules)
+```
+
+The datasets were further filtered to keep only those that measure OOPs twice in the household, once in the consumption module, and the health module. Out of the 80 initial surveys `r length(surveys_bothmodules$survey)` measured OOPs in both modules, which will be the sample we will use in what follows.
+
+
+## Average OOPs
+
+```{r get_means , include=FALSE}
+
+# Grab means by survey and module
+tab_mean_oops <- df_bothm %>% 
+  group_by(survey,module) %>% 
+  summarise(mean_oops = mean(oops, na.rm = TRUE),
+            median_oops = median(oops, na.rm=TRUE),
+            obs = n())
+
+# Grab OOPs of health module over OOPs of consumption module
+tab_health_over_consumption <- tab_mean_oops %>% 
+  group_by(survey) %>% 
+  mutate(healthc_healthm = first(mean_oops) / last(mean_oops),
+         mhealthc_mhealthm = first(median_oops) / last(median_oops),
+         trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
+  ungroup() %>% 
+  select(survey, mhealthc_mhealthm, healthc_healthm, trim_mhealthc_mhealthm) %>% 
+  distinct() %>% 
+  mutate( order = seq_along(survey),
+          survey2 = fct_reorder(survey, desc(order) ))
+
+# get number where health module is higher
+nhealth_higher <- tab_health_over_consumption %>% 
+  filter(healthc_healthm<1) %>% 
+  nrow()
+
+```
+
+
+In our selected sample of surveys the mean of OOPs in the health module was higher than in the consumption module for most surveys. As can be seen in Figure 1, where `r nhealth_higher` out of `r length(surveys_bothmodules$survey)` surveys have a share less than one, indicating that the mean OOPs in their consumption module are lower than the mean OOPs from their health module.
+
+```{r mean_graph, echo=FALSE}
+# Graph Average Means by survey
+tab_health_over_consumption %>% 
+  ggplot(aes( survey2 ,healthc_healthm)) +
+  geom_point(color="blue") +
+  coord_flip() +
+  ggtitle("Mean OOPs from the consumption module over the health module") +
+  xlab("") +
+  ylab("Share") +
+  geom_hline(yintercept=1, alpha=3, linetype = "dashed") +
+  scale_y_continuous(breaks = seq(0,2,0.25), limits = c(0,2))
+```
+
+```{r prep_zero_oops, include=FALSE}
+
+# Percentage by survey with zero oops
+per_zero <- df_bothm %>% 
+  group_by(survey,module) %>% 
+  mutate(zero_oops = oops==0) %>% 
+  summarise(mean_zero = mean(zero_oops, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(module) %>% 
+  summarise(mean_zero2 = mean(mean_zero, na.rm = TRUE))
+
+# Grab means for oops>0
+tab_mean_oops_zero <- df_bothm %>% 
+  filter(oops>0) %>% 
+  group_by(survey,module) %>% 
+  summarise(mean_oops = mean(oops, na.rm = TRUE),
+            median_oops = median(oops, na.rm=TRUE),
+            obs = n())
+
+# Grab OOPs of health module over OOPs of consumption module
+tab_health_over_consumption_zero <- tab_mean_oops_zero %>% 
+  group_by(survey) %>% 
+  mutate(healthc_healthm = first(mean_oops) / last(mean_oops),
+         mhealthc_mhealthm = first(median_oops) / last(median_oops),
+         trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
+  ungroup() %>% 
+  select(survey, mhealthc_mhealthm, healthc_healthm, trim_mhealthc_mhealthm) %>% 
+  distinct() %>% 
+  mutate( order = seq_along(survey),
+          survey2 = fct_reorder(survey, desc(order) ))
+
+# get number where health module is higher
+nhealth_higher_zero <- tab_health_over_consumption_zero %>% 
+  filter(healthc_healthm<1) %>% 
+  nrow()
+```
+
+
+On average `r round(per_zero$mean_zero2[[1]]*100,1)`% and `r round(per_zero$mean_zero2[[2]]*100,1)`% of the households report zero OOPs in the consumption and health module respectively. Given the high percentage of households reporting zero OOPs, can we expect the mean OOPs between modules to allign better for households reporting positive OOPs? 
+
+Figure 2 exhibits that `r nhealth_higher_zero` out of `r length(surveys_bothmodules$survey)` have higher mean OOPs in the health module than in the consumption module after excluding observations reporting zero OOPs.
+
+```{r mean_oops_zeroplus, echo=FALSE}
+# Graph Average Means by survey - positive oops
+tab_health_over_consumption_zero %>% 
+  ggplot(aes( survey2 ,healthc_healthm)) +
+  geom_point(color="blue") +
+  coord_flip() +
+  ggtitle("Mean OOPs from the consumption module over the health module") +
+  labs(subtitle = "For households reporting positive OOPs") +
+  xlab("") +
+  ylab("Share") +
+  geom_hline(yintercept=1, alpha=3, linetype = "dashed") +
+  scale_y_continuous(breaks = seq(0,2,0.25), limits = c(0,2))
+```
+
+```{r repetition_zeros, include=FALSE}
+
+df_zero <- df_bothm %>% 
+  group_by(hhid_compilation) %>% 
+  mutate(
+    c0_h0 = (first(oops)==0 & last(oops)==0),
+    c1_h0 = (first(oops)>0 & last(oops)==0),
+    c0_h1 = (first(oops)==0 & last(oops)>0),
+    c1_h1 = (first(oops)>0 & last(oops)>0 ) )
+
+df_zero2 <- df_zero %>% 
+  select(hhid_compilation,survey, c0_h0, c1_h0, c0_h1, c1_h1) %>% 
+  distinct()
+
+# Table with concordance categories by survey
+tab_zero_reps <- df_zero2 %>% 
+  group_by(survey) %>% 
+  summarise(both_zero = mean(c0_h0, na.rm = TRUE),
+            posc_zeroh = mean(c1_h0, na.rm = TRUE),
+            zeroc_posh = mean(c0_h1, na.rm = TRUE),
+            posc_poch = mean(c1_h1, na.rm = TRUE))
+
+# Calculate Average concordance across surveys
+per_concordance <- tab_zero_reps %>% 
+  summarise(both_zero2 = mean(both_zero, na.rm = TRUE),
+            both_pos2 = mean(posc_poch, na.rm = TRUE))
+
+per_concordance
+
+```
+
+## Zero OOPs
+
+Also if households reported zero OOPs in one module, how do they respond in the next one? Across surveys households 
+`r round(per_concordance$both_zero2[[1]]*100,1)`% of households report zero OOPs in both modules, and `r round(per_concordance$both_pos2[[1]]*100,1)`% report positive OOPs in both. In total `r (  round(   (per_concordance$both_zero2[[1]] + per_concordance$both_pos2[[1]])*100    ,1 )    )`% of households report concordant OOPs between modules, leaving `r 100- (  round(   (per_concordance$both_zero2[[1]] + per_concordance$both_pos2[[1]])*100    ,1 )    )`% of households that differ on their answers between modules, which is problematic from a measuring perspective.
+
+Table 1 exhibits the concordance of household's answers between the health module and consumption module by survey. The percentages vary widely by surveys, Ghana_1991 and Ghana_2005 both have zero households reporting zero OOPs in both modules (as both of them had OOPs instruments in consumption modules administered frequently by visits throughout the year). On the other hand the surveys from Uganda show 30%+ of households reporting zero OOPs in both modules.
+
+Ghana_1991 has the worst non-correspondant rates where 57.9% of households reported positive OOPs in the health or consumption module, and then reported zero on the other one. This is solely driven by the zero OOPs responses in the health module, which happened to be episodic, so in order for individuals to report OOPs they needed to report being recently ill. On the other hand, the non-concordance rate of Nigeria_2015 is completely explained by its consumption module, the OOPs instrument happened to be a single question asking households for their total OOPs.
+
+
+
+```{r table_zero_concordance, echo=FALSE}
+
+# Put it in percentage
+percentage <- function(x){
+  round(x*100,1)
+  }
+
+tab_zero_reps_per <- tab_zero_reps %>% 
+  mutate_at(vars(matches("h")) , percentage) %>% 
+  mutate(`Concordance Rate` = both_zero + posc_poch,
+         `Non-Concordance Rate` = 100- (both_zero + posc_poch) ) %>% 
+  rename(`Both Zero` = both_zero,
+         `C>0, H=0` = posc_zeroh,
+         `C=0, H>0` = zeroc_posh,
+         `Both Positive` = posc_poch,
+         Survey = survey)
+
+  kable(tab_zero_reps_per) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+    footnote(general = "The columns represent the percentage of households in each category depending on their reported OOPs in the consumption and health module. The first column is the percentage of households in the survey that reported zero OOPS in both the health module and consumption module. The second column is the percentage of households reporting strictly positive OOPs in the consumption module, and zero OOPs in the health module. ")
+```
+## Mean OOPs by Module and socio-economic status
+
+We have seen so far that OOPs from the health module tend to be higher than those from the consumption module. A possibility is that these results are driven by socio-economic status, where only households from richer or poorer households report more OOPs a module. We will use the quintiles of non health consumption as a sign of socio-economic status, excluding OOPs is important as total consumption is not a relevant social marker for households experiencing a health shock and had to go through high health care expenditures.
+
+Figure 3 exhibits for each survey and consumption quintile the mean OOPs of the consumption module over those of the health module. We observe no clear pattern between socio-economic status and the differences in the reported OOPs between both modules.
+
+
+```{r mean_consumption_quintile, echo=FALSE}
+
+# Grab means by survey and module, and consumption quintile
+tab_mean_cq <- df_bothm %>% 
+  group_by(survey,module,consumption_quintile) %>% 
+  summarise(mean_oops = mean(oops, na.rm = TRUE),
+            median_oops = median(oops, na.rm=TRUE),
+            obs = n())
+
+# Grab OOPs of health module over OOPs of consumption module
+tab_hc_cq <- tab_mean_cq %>% 
+  group_by(survey,consumption_quintile) %>% 
+  mutate(healthc_healthm = first(mean_oops) / last(mean_oops),
+         mhealthc_mhealthm = first(median_oops) / last(median_oops),
+         trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
+  ungroup() %>% 
+  select(survey, consumption_quintile, mhealthc_mhealthm, healthc_healthm, trim_mhealthc_mhealthm) %>% 
+  distinct() %>% 
+  mutate( order = seq_along(survey),
+          survey2 = fct_reorder(survey, desc(order) )) %>% # Create order for surveys
+  filter(consumption_quintile> -1) # eliminate those with NA
+
+
+# Graph mean
+tab_hc_cq %>% 
+  ggplot(aes(x=survey2,y=healthc_healthm, 
+             group = reorder(consumption_quintile, -consumption_quintile), 
+             fill = consumption_quintile) ) +
+  geom_bar(position='dodge', stat='identity') +
+  coord_flip() +
+  ggtitle("Mean OOPs from the consumption module over the health module") +
+  labs(subtitle = "By consumption quintile") +
+  xlab("") +
+  ylab("Share") +
+  geom_hline(yintercept=1, alpha=3, linetype = "dashed")
+
+
+```
+
+## Catastrophic health expenditures (CHEs)
+
+Popular datasets like the World's Bank HEFPI, and the World Development Indicators include estimations for the percentage of households incurring into a level of OOPs that is too burdensome to bear. The most popular indicators are Catastrophic health expenditures, which consist on a ratio between the OOPs of a household and its total available resources. What is troubling, is that these popular datasets publish their estimates without stating if the OOPs were coming from the health or consumption module, and without awareness of what are the possible effects of these.
+
+Previously, we saw that OOPs tended to be higher for the health module, now let's check how much this can potentially impact CHE meaures. We will use our sample of surveys with OOPs in a consumption and health module, and add these two estimates of OOPs to the non-health consumption of each household to come up with two different estimates of total consumption. Then, we will be able to calculate the most popular indicator of the CHE kind, 10% of total consumption, which is simply an binary variable of whether a household's OOPs exceed 10% of their total consumption.
+
+
+CHE10%, the most popular indicator of its kind, where households inccur catastrophic health expenditures whenever
+
+all survey with OOPs in both a consumption and health module,
+
+
+
+
+
+
+
+
+
+
+
