@@ -12,7 +12,14 @@ df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Fi
                col_types = cols(hhead_age = col_double(),
                                 health_items = col_double(),
                                 health_recall2 = col_double(),
-                                health_consumption = col_double()))
+                                health_consumption = col_double(),
+                                consumption_quintile = col_integer(),
+                                nonfood_nonhealth_consumption = col_double(),
+                                nonhealth_consumption = col_double(),
+                                food_consumption = col_double()
+                                ))
+
+
 
 # Make Tidy -----------------------------------------------------------
 

@@ -310,6 +310,7 @@ df_che <- df_bothm %>%
          che10 = (oops/total_consumption)>.1,
          che25 = (oops/total_consumption)>.25)
 
+
 tab_che <- df_che %>% 
   group_by(survey,module) %>% 
   summarise(mean_che10 = mean(che10, na.rm = TRUE),
