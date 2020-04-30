@@ -2,10 +2,12 @@
 # Analysis - Health vs. Consumption Module --------------------------------
 
 library(tidyverse)
+library(modelr)
 library(magrittr)
 library(dplyr)
 library(ggrepel)
 library(hexbin)
+library(gridExtra)
 
 rm(list=ls())
 
@@ -13,14 +15,9 @@ rm(list=ls())
 # Load
 df <- read.csv2("LSMScompilation_tidy.csv")
 tab_recall <- read.csv2("LSMScompilation_recall_nitems.csv")
+df_nontidy <- read.csv2("LSMScompilation_nontidy.csv")
 
-# need number of obs by survey
-obs <- df %>% 
-  select(hhid_compilation, survey) %>% 
-  distinct() %>% 
-  group_by(survey) %>% 
-  summarise(count= n())
-
+tab_recall
 
 # Filter - only surveys with health module and consumption module ---------
 
@@ -37,70 +34,126 @@ length(surveys_bothmodules$survey)
 
 surveys_bothmodules
 
-# Keep only observations from selected surveys
+# Keep only observations from selected surveys - tidy
 df_bothm <- df %>% # df with surveys from both modules
   inner_join(surveys_bothmodules)
 
-head(df_bothm)
+# keep only observations from selected surveys - nontidy
+df_bothm_nontidy <- df_nontidy %>% 
+  inner_join(surveys_bothmodules)
+
+
 
 # Scatter-Plots -----------------------------------------------------------
+
 
 # Facet_wrap not really an option, I will make individual graphs by survey
 
 scatter_xy <- function(survey_name){
 
 # Filter survey and take outliers out
-data <- df_bothm %>% 
+data <- df_bothm_nontidy %>% 
   filter(survey==survey_name) %>%
-  select(hhid_compilation,module, oops, module) %>% 
+  select(hhid_compilation,health_consumption,healthm_oops) %>% 
   na.omit() %>% 
-  group_by(module) %>% 
-  mutate(z_score = oops / sd(oops, na.rm = TRUE)) %>% 
-  filter(z_score<2) # take out all those with z>2 for viz purposes
-
-data %>% head()
-
-# Put it wider, and create vars  
-data2 <- data %>% 
-  group_by(hhid_compilation) %>% 
-  mutate(count = n()) %>% 
-  filter(count>1) %>% # Take away possible observations with only one
-  mutate(`Health Module` = last(oops)) %>% 
-  slice(1) %>% # keep only one observation
-  ungroup() %>% 
-  rename(`Consumption Module` = oops)  # very inneficient but pivot_wider not working for a reason
+  mutate(z_health = healthm_oops / sd(healthm_oops, na.rm = TRUE),
+         z_consumption = health_consumption / sd(health_consumption, na.rm = TRUE)) %>% 
+  filter(z_health<2, z_consumption<2) %>%  # take out all those with z>2 for viz purposes
+  rename(`Health Module` = healthm_oops,
+         `Consumption Module` = health_consumption)
 
 # Limit for both axis for viz  
-max_scale <- data2 %$% 
+max_scale <- data %$% 
     max( max(`Health Module`, na.rm = TRUE), max(`Consumption Module`)     , na.rm = TRUE)
 
-# Number of bins
-nbins <- data2 %>% 
+# Number of bins (optional to use)
+nbins <- data %>% 
   nrow() / 100
   
+# one special for Ghana 2013
+  if (survey_name=="Ghana_2013"){
+    graph <- data %>% 
+      ggplot(aes(`Consumption Module`,`Health Module`)) +
+      #geom_point(alpha = 1/10) +
+      geom_hex(bins = 68) +
+      scale_fill_gradient(low = "yellow", high = "red", limits = c(5, 200) , guide = FALSE) + #option to show the
+      geom_abline(intercept = 0, slope = 1, alpha=10, linetype = "dashed", color="black") +
+      scale_y_continuous(limits = c(0,max_scale)) +
+      scale_x_continuous(limits = c(0,max_scale)) +
+      ggtitle(survey_name) +
+      theme(axis.text = element_text(size = 7), 
+            axis.title = element_text(size = 7),
+            plot.title = element_text(size = 11, face = "bold", hjust=0.5))
+    
+    graph
 
-  graph <- data2 %>% 
-  ggplot(aes(`Consumption Module`,`Health Module`)) +
-  #geom_point(alpha = 1/10) +
-  geom_hex(bins= nbins) +
-  scale_fill_gradient(limits = c(5, 200)) +
-  geom_abline(intercept = 0, slope = 1) +
-  scale_y_continuous(limits = c(0,max_scale)) +
-  scale_x_continuous(limits = c(0,max_scale)) +
-  ggtitle(survey_name)
-
-graph
+# All the rest  
+  } else{
+  
+    graph <- data %>% 
+    ggplot(aes(`Consumption Module`,`Health Module`)) +
+    #geom_point(alpha = 1/10) +
+    geom_hex() + #bins= nbins
+    scale_fill_gradient(low = "yellow", high = "red", limits = c(5, 200) , guide = FALSE) + #option to show the
+    geom_abline(intercept = 0, slope = 1, alpha=10, linetype = "dashed", color="black") +
+    scale_y_continuous(limits = c(0,max_scale)) +
+    scale_x_continuous(limits = c(0,max_scale)) +
+    ggtitle(survey_name) +
+    theme(axis.text = element_text(size = 7), 
+            axis.title = element_text(size = 7),
+            plot.title = element_text(size = 11, face = "bold", hjust=0.5))
+  
+  graph
+  }
 
 }
 
+
+
+# Try it
+scatter_xy("Ghana_2017")
 
 # List of surveys
 bothm_surveylist <- surveys_bothmodules$survey %>% 
   as.character()
 
+bothm_surveylist
+
 # get all the graphs
 hex_graphs <- bothm_surveylist %>%  map(scatter_xy)
-hex_graphs
+
+# Put all graphs in one page
+grid.arrange(hex_graphs[[1]],hex_graphs[[2]],hex_graphs[[3]],hex_graphs[[4]],
+             hex_graphs[[5]],hex_graphs[[6]],hex_graphs[[7]],hex_graphs[[8]],
+             hex_graphs[[9]],hex_graphs[[10]],hex_graphs[[11]],hex_graphs[[12]],
+             hex_graphs[[13]],hex_graphs[[14]],hex_graphs[[15]],hex_graphs[[16]], hex_graphs[[17]])
+
+
+
+# Characteristic of surveys -----------------------------------------------
+
+# Create simple regression
+survey_model <- function(survey_name){
+  df_aux <- df_bothm_nontidy %>% filter(survey==survey_name)
+  model <- lm(healthm_oops ~ health_consumption , data = df_aux)
+  coef(model)[[2]]
+}
+
+
+coefs <- bothm_surveylist %>% map(survey_model) %>% unlist()
+
+tab_reg <- tibble(coef = coefs, survey = bothm_surveylist) %>%
+  inner_join(tab_recall) %>% pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
+  group_by(survey) %>% 
+  transmute(Survey = survey,
+            `Regression Coefficient` = coef,
+            `Items Health Module` = first(nitems_Health),
+            `Items Consumption Module` = last(nitems_Consumption),
+            `Avg. Recall Health Module` = first(recall_Health),
+            `Avg. Recall Consumption Module` = last(recall_Consumption) ) %>% 
+  distinct() %>% 
+  arrange(`Regression Coefficient`)
+
 
 # Compare Averages between modules ----------------------------------------
 
@@ -267,7 +320,7 @@ tab_che %>%
   geom_point() +
   coord_flip() +
   scale_y_continuous(breaks = seq(0,.6,.1), limits = c(0,.6))
-  
+
 
 
 
