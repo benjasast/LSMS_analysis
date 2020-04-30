@@ -1,6 +1,6 @@
 ---
 title: "OOPs Analysis"
-output: html_document
+output: bookdown::html_document2
 ---
 
 
@@ -13,16 +13,21 @@ library(tidyverse)
 library(magrittr)
 library(knitr)
 library(kableExtra)
+library(hexbin)
+library(gridExtra)
+library(bookdown)
+
 
 
 rm(list=ls())
 
 # Load data
 df <- read.csv2("LSMScompilation_tidy.csv")
+df_nontidy <- read.csv2("LSMScompilation_nontidy.csv")
 tab_recall <- read.csv2("LSMScompilation_recall_nitems.csv")
 ```
 
-## Search Strategy
+# Search Strategy
 
 Our search started at the World Bank’s Microdata Library, where we looked for micro-surveys from the 
 Living Standards Measurement Surveys (LSMS) program. We collected data from 80 surveys from the program wich were publicly available.
@@ -41,12 +46,137 @@ surveys_bothmodules <- tab_recall %>%
 # Keep only observations from selected surveys in df
 df_bothm <- df %>% # df with surveys from both modules
   inner_join(surveys_bothmodules)
+
+# keep only observations from selected surveys - nontidy
+df_bothm_nontidy <- df_nontidy %>% 
+  inner_join(surveys_bothmodules)
 ```
 
 The datasets were further filtered to keep only those that measure OOPs twice in the household, once in the consumption module, and the health module. Out of the 80 initial surveys `r length(surveys_bothmodules$survey)` measured OOPs in both modules, which will be the sample we will use in what follows.
 
+# Household OOPs
 
-## Average OOPs
+With two different OOP estimates for each household for `r length(surveys_bothmodules$survey)` surveys, we have the opportunity to explore how much the reported OOPs differ by module in the same household. Figure 1 shows scatterplots for each survey, where the x-axis corresponds to the OOPs in the health module, and the y-axis to the OOPs in the consumption module. The color of the hexagons in the figure represent the concentration of observations around the area, with more intense tones representing a higher concentration.
+
+It is interesting to see that some surveys do a very good job at eliciting similar reported OOPs between modules, such as the surveys from Uganda, and Bulgaria. On the other hand, the other surveys have a clear pattern with households reporting more OOPs in the health module, with the exception of Ghana 2017.
+
+```{r scatter_health_consumption, echo=FALSE, warning=FALSE, message=FALSE}
+
+scatter_xy <- function(survey_name){
+
+# Filter survey and take outliers out
+data <- df_bothm_nontidy %>% 
+  filter(survey==survey_name) %>%
+  select(hhid_compilation,health_consumption,healthm_oops) %>% 
+  na.omit() %>% 
+  mutate(z_health = healthm_oops / sd(healthm_oops, na.rm = TRUE),
+         z_consumption = health_consumption / sd(health_consumption, na.rm = TRUE)) %>% 
+  filter(z_health<2, z_consumption<2) %>%  # take out all those with z>2 for viz purposes
+  rename(`Health Module` = healthm_oops,
+         `Consumption Module` = health_consumption)
+
+# Limit for both axis for viz  
+max_scale <- data %$% 
+    max( max(`Health Module`, na.rm = TRUE), max(`Consumption Module`)     , na.rm = TRUE)
+
+# Number of bins (optional to use)
+nbins <- data %>% 
+  nrow() / 100
+  
+# one special for Ghana 2013
+  if (survey_name=="Ghana_2013"){
+    graph <- data %>% 
+      ggplot(aes(`Consumption Module`,`Health Module`)) +
+      #geom_point(alpha = 1/10) +
+      geom_hex(bins = 68) +
+      scale_fill_gradient(low = "yellow", high = "red", limits = c(5, 200) , guide = FALSE) + #option to show the
+      geom_abline(intercept = 0, slope = 1, alpha=10, linetype = "dashed", color="black") +
+      scale_y_continuous(limits = c(0,max_scale)) +
+      scale_x_continuous(limits = c(0,max_scale)) +
+      ggtitle(survey_name) +
+      theme(axis.text = element_text(size = 7), 
+            axis.title = element_text(size = 7),
+            plot.title = element_text(size = 11, face = "bold", hjust=0.5))
+    
+    graph
+
+# All the rest  
+  } else{
+  
+    graph <- data %>% 
+    ggplot(aes(`Consumption Module`,`Health Module`)) +
+    #geom_point(alpha = 1/10) +
+    geom_hex() + #bins= nbins
+    scale_fill_gradient(low = "yellow", high = "red", limits = c(5, 200) , guide = FALSE) + #option to show the
+    geom_abline(intercept = 0, slope = 1, alpha=10, linetype = "dashed", color="black") +
+    scale_y_continuous(limits = c(0,max_scale)) +
+    scale_x_continuous(limits = c(0,max_scale)) +
+    ggtitle(survey_name) +
+    theme(axis.text = element_text(size = 7), 
+            axis.title = element_text(size = 7),
+            plot.title = element_text(size = 11, face = "bold", hjust=0.5))
+  
+  graph
+  }
+
+}
+
+# List of surveys
+bothm_surveylist <- surveys_bothmodules$survey %>% 
+  as.character()
+
+# get all the graphs
+hex_graphs <- bothm_surveylist %>%  map(scatter_xy)
+
+# Put all graphs in one page
+grid.arrange(hex_graphs[[1]],hex_graphs[[2]],hex_graphs[[3]],hex_graphs[[4]],
+             hex_graphs[[5]],hex_graphs[[6]],hex_graphs[[7]],hex_graphs[[8]],
+             hex_graphs[[9]],hex_graphs[[10]],hex_graphs[[11]],hex_graphs[[12]],
+             hex_graphs[[13]],hex_graphs[[14]],hex_graphs[[15]],hex_graphs[[16]], hex_graphs[[17]])
+
+
+```
+
+What are the characteristics of the surveys who have OOPs that better allign between their health and consumption modules. Table 1 sorts in ascending order the coefficient for each survey, obtained by a regression between the OOPs in the health module as the dependent variable, and the OOPs in the consumption module as the independent variable. The closer the coefficient is to one, the more these two variables move in tandem.
+
+Not surprisingly, three surveys from Uganda each with only one item in the health and consumption module, have coefficients very close to one. Households reacted 
+
+
+```{r simple_model_OOPs, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Create simple regression
+survey_model <- function(survey_name){
+  df_aux <- df_bothm_nontidy %>% filter(survey==survey_name)
+  model <- lm(healthm_oops ~ health_consumption , data = df_aux)
+  coef(model)[[2]]
+}
+
+
+coefs <- bothm_surveylist %>% map(survey_model) %>% unlist()
+
+tab_reg <- tibble(coef = coefs, survey = bothm_surveylist) %>%
+  inner_join(tab_recall) %>% pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
+  group_by(survey) %>% 
+  transmute(
+            `Regression Coefficient` = round(coef,2),
+            `Items Health Module` = first(nitems_Health),
+            `Items Consumption Module` = last(nitems_Consumption),
+            `Avg. Recall Health Module` = first(recall_Health),
+            `Avg. Recall Consumption Module` = round(last(recall_Consumption),1 ) ) %>% 
+  rename(Survey = survey) %>% 
+  distinct() %>% 
+  arrange(`Regression Coefficient`)
+
+
+kable(tab_reg, caption = "Surveys' similitude between OOPs and instrument characteristics") %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+   footnote(general = "The number of items correspond to the number of instruments utilized in the survey to arrive at the OOPs estimate in each module. The Avg. Recall period is in weeks, and represents how far back in time households were asked to recall their expenditures")
+  
+```
+
+
+
+# Average OOPs
 
 ```{r get_means , include=FALSE}
 
@@ -179,7 +309,7 @@ per_concordance
 
 ```
 
-## Zero OOPs
+# Zero OOPs
 
 Also if households reported zero OOPs in one module, how do they respond in the next one? Across surveys households 
 `r round(per_concordance$both_zero2[[1]]*100,1)`% of households report zero OOPs in both modules, and `r round(per_concordance$both_pos2[[1]]*100,1)`% report positive OOPs in both. In total `r (  round(   (per_concordance$both_zero2[[1]] + per_concordance$both_pos2[[1]])*100    ,1 )    )`% of households report concordant OOPs between modules, leaving `r 100- (  round(   (per_concordance$both_zero2[[1]] + per_concordance$both_pos2[[1]])*100    ,1 )    )`% of households that differ on their answers between modules, which is problematic from a measuring perspective.
@@ -207,11 +337,11 @@ tab_zero_reps_per <- tab_zero_reps %>%
          `Both Positive` = posc_poch,
          Survey = survey)
 
-  kable(tab_zero_reps_per) %>% 
+  kable(tab_zero_reps_per, caption = "Concordance between OOPs by survey" ) %>% 
   kable_styling(bootstrap_options = c("striped", "hover")) %>% 
     footnote(general = "The columns represent the percentage of households in each category depending on their reported OOPs in the consumption and health module. The first column is the percentage of households in the survey that reported zero OOPS in both the health module and consumption module. The second column is the percentage of households reporting strictly positive OOPs in the consumption module, and zero OOPs in the health module. ")
 ```
-## Mean OOPs by Module and socio-economic status
+# Mean OOPs by Module and socio-economic status
 
 We have seen so far that OOPs from the health module tend to be higher than those from the consumption module. A possibility is that these results are driven by socio-economic status, where only households from richer or poorer households report more OOPs a module. We will use the quintiles of non health consumption as a sign of socio-economic status, excluding OOPs is important as total consumption is not a relevant social marker for households experiencing a health shock and had to go through high health care expenditures.
 
@@ -257,16 +387,13 @@ tab_hc_cq %>%
 
 ```
 
-## Catastrophic health expenditures (CHEs)
+# Catastrophic health expenditures (CHEs)
 
 Popular datasets like the World's Bank HEFPI, and the World Development Indicators include estimations for the percentage of households incurring into a level of OOPs that is too burdensome to bear. The most popular indicators are Catastrophic health expenditures, which consist on a ratio between the OOPs of a household and its total available resources. What is troubling, is that these popular datasets publish their estimates without stating if the OOPs were coming from the health or consumption module, and without awareness of what are the possible effects of these.
 
 Previously, we saw that OOPs tended to be higher for the health module, now let's check how much this can potentially impact CHE meaures. We will use our sample of surveys with OOPs in a consumption and health module, and add these two estimates of OOPs to the non-health consumption of each household to come up with two different estimates of total consumption. Then, we will be able to calculate the most popular indicator of the CHE kind, 10% of total consumption, which is simply an binary variable of whether a household's OOPs exceed 10% of their total consumption.
 
 
-CHE10%, the most popular indicator of its kind, where households inccur catastrophic health expenditures whenever
-
-all survey with OOPs in both a consumption and health module,
 
 
 
