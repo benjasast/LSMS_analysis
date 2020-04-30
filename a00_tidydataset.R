@@ -11,16 +11,15 @@ rm(list=ls())
 df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Files/aux_tidy.csv",
                col_types = cols(hhead_age = col_double(),
                                 health_items = col_double(),
-                                health_recall2 = col_double()))
-
-
+                                health_recall2 = col_double(),
+                                health_consumption = col_double()))
 
 # Make Tidy -----------------------------------------------------------
 
 # Keep relevant vars
 df_rel <- df %>% 
-  select(hhid_compilation,year, survey, consumption_quintile,
-         food_consumption, nonsub_consumption, nonhealth_consumption, nonfood_nohealth_consumption, 
+  select(hhid_compilation,survey, consumption_quintile, nonsub_consumption,
+         food_consumption, nonhealth_consumption, nonfood_nohealth_consumption, 
          health_consumption,healthm_oops, healthm_recall2, health_recall2, healthm_items, health_items,
          hhead_married, hhead_female, hhead_age,
          episodic_hosp)
@@ -72,6 +71,8 @@ head(df_tidy)
 write_csv2(df_tidy, "LSMScompilation_tidy.csv")
 # Table with characteristics of each survey
 write.csv2(tab_recall_len, "LSMScompilation_recall_nitems.csv")
+# non-tidy dataset
+write.csv2(df_rel, "LSMScompilation_nontidy.csv")
 
 
 
