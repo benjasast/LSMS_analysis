@@ -16,7 +16,8 @@ df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Fi
                                 consumption_quintile = col_integer(),
                                 nonfood_nonhealth_consumption = col_double(),
                                 nonhealth_consumption = col_double(),
-                                food_consumption = col_double()
+                                food_consumption = col_double(),
+                                year = col_double()
                                 ))
 
 
@@ -29,13 +30,13 @@ df_rel <- df %>%
          food_consumption, nonhealth_consumption, nonfood_nohealth_consumption, 
          health_consumption,healthm_oops, healthm_recall2, health_recall2, healthm_items, health_items,
          hhead_married, hhead_female, hhead_age,
-         episodic_hosp)
+         episodic_hosp, year)
 
 
 # Pivot - OOPs
 df_pivot <- df_rel %>% select(survey,hhid_compilation,healthm_oops,health_consumption, consumption_quintile,
                               food_consumption, nonsub_consumption, nonhealth_consumption, nonfood_nohealth_consumption,
-                              hhead_married, hhead_female, hhead_age,episodic_hosp ) %>% 
+                              hhead_married, hhead_female, hhead_age,episodic_hosp, year) %>% 
   pivot_longer(c(health_consumption, healthm_oops),names_to = "module", values_to = "oops") %>% 
   filter(oops>-1) %>% # Take out NAs and keep zeros
   mutate(module = case_when(
@@ -80,10 +81,6 @@ write_csv2(df_tidy, "LSMScompilation_tidy.csv")
 write.csv2(tab_recall_len, "LSMScompilation_recall_nitems.csv")
 # non-tidy dataset
 write.csv2(df_rel, "LSMScompilation_nontidy.csv")
-
-
-
-
 
 
 
