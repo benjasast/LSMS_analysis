@@ -176,7 +176,8 @@ tab_mean_oops %>%
 # Grab OOPs of health module over OOPs of consumption module
 tab_health_over_consumption <- tab_mean_oops %>% 
   group_by(survey) %>% 
-  mutate(healthc_healthm = first(mean_oops) / last(mean_oops),
+  mutate(healthc_healthm = first(mean_oops) / last(mean_oops), # Consumption over health
+         healthm_healthc = last(mean_oops) / first(mean_oops), # Health over consumption
          mhealthc_mhealthm = first(median_oops) / last(median_oops),
          trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
   ungroup() %>% 

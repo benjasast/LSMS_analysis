@@ -25,6 +25,7 @@ rm(list=ls())
 df <- read.csv2("LSMScompilation_tidy.csv")
 df_nontidy <- read.csv2("LSMScompilation_nontidy.csv")
 tab_recall <- read.csv2("LSMScompilation_recall_nitems.csv")
+tab_survey_names <- read.csv("~/Dropbox/LSMS_Compilation/Analysis/Tables_Figures/table1_survey_description.csv")
 ```
 
 # Search Strategy
@@ -52,6 +53,51 @@ df_bothm_nontidy <- df_nontidy %>%
 ```
 
 The surveys were analyzed to include only those with two OOPs measurements—one in the consumption module, and once more in the health module. Out of the 80 initial surveys, only `r length(surveys_bothmodules$survey)` measured OOPs in both modules, which will be the sample that will be used in this work.
+
+# Surveys
+
+The utilized sureys in the study are listed in Table 1. 
+
+```{r descriptive_table, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Tab1 - grab surveys and names, plus characteristics
+tab1_descriptive <- tab_survey_names %>% select(Survey, survey.name, LSMS) %>% 
+  rename(`Survey Name` = survey.name,
+         `LSMS Status` = LSMS,
+         survey = Survey) %>% 
+  inner_join(tab_recall) %>% 
+  pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
+  group_by(survey) %>% 
+  mutate(`Items Health Module` = first(nitems_Health),
+            `Items Consumption Module` = last(nitems_Consumption),
+            `Avg. Recall Health Module` = first(recall_Health),
+            `Avg. Recall Consumption Module` = round(last(recall_Consumption),1 ) ) %>% 
+  rename(Survey = survey) %>% 
+  select(Survey, `Survey Name`, `LSMS Status`, `Items Health Module`,`Items Consumption Module`, `Avg. Recall Health Module`, `Avg. Recall Consumption Module` ) %>% 
+  distinct()
+
+# Grab number of observations per survey
+obs <- df_nontidy %>% 
+  select(hhid_compilation, healthm_oops, health_consumption, survey, nonhealth_consumption) %>% 
+  filter(healthm_oops>-1,health_consumption>-1) %>%  # take NAs out 
+  group_by(survey) %>% 
+  summarise(Observations = n(),
+            `Mean Non-Health Consumption` = round( mean(nonhealth_consumption, na.rm = TRUE),1),
+            `Mean OOPs Health Module` = round( mean(healthm_oops, na.rm = TRUE),1),
+            `Mean OOPs Consumption Module`  = round( mean(health_consumption, na.rm = TRUE),1)) %>% 
+  rename(Survey = survey)
+
+# Put observations in
+tab1_descriptive <- tab1_descriptive %>% 
+  left_join(obs)
+
+kable(tab1_descriptive) %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+
+
 
 # Household OOPs
 
@@ -191,14 +237,18 @@ tab_mean_oops <- df_bothm %>%
 # Grab OOPs of health module over OOPs of consumption module
 tab_health_over_consumption <- tab_mean_oops %>% 
   group_by(survey) %>% 
-  mutate(healthc_healthm = first(mean_oops) / last(mean_oops),
+  mutate(healthm_healthc = last(mean_oops) / first(mean_oops), # consumption over health
+         healthc_healthm = first(mean_oops) / last(mean_oops), # health over consumption
          mhealthc_mhealthm = first(median_oops) / last(median_oops),
          trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
   ungroup() %>% 
-  select(survey, mhealthc_mhealthm, healthc_healthm, trim_mhealthc_mhealthm) %>% 
+  select(survey, mhealthc_mhealthm, healthc_healthm, healthm_healthc, trim_mhealthc_mhealthm) %>% 
   distinct() %>% 
   mutate( order = seq_along(survey),
           survey2 = fct_reorder(survey, desc(order) ))
+
+tab_health_over_consumption
+
 
 # get number where health module is higher
 nhealth_higher <- tab_health_over_consumption %>% 
@@ -214,14 +264,14 @@ In our sample of surveys, the mean OOPs in the health module were higher than in
 ```{r mean_graph, echo=FALSE}
 # Graph Average Means by survey
 tab_health_over_consumption %>% 
-  ggplot(aes( survey2 ,healthc_healthm)) +
+  ggplot(aes( survey2 ,healthm_healthc)) +
   geom_point(color="blue") +
   coord_flip() +
-  ggtitle("Mean OOPs from the consumption module over the health module") +
+  ggtitle("Mean OOPs from the health module over the consumption module") +
   xlab("") +
-  ylab("Share") +
+  ylab("Ratio") +
   geom_hline(yintercept=1, alpha=3, linetype = "dashed") +
-  scale_y_continuous(breaks = seq(0,2,0.25), limits = c(0,2))
+  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,12))
 ```
 
 ```{r prep_zero_oops, include=FALSE}
@@ -246,14 +296,16 @@ tab_mean_oops_zero <- df_bothm %>%
 # Grab OOPs of health module over OOPs of consumption module
 tab_health_over_consumption_zero <- tab_mean_oops_zero %>% 
   group_by(survey) %>% 
-  mutate(healthc_healthm = first(mean_oops) / last(mean_oops),
+  mutate(healthm_healthc = last(mean_oops) / first(mean_oops), # consumption over health
+         healthc_healthm = first(mean_oops) / last(mean_oops), # health over consumption
          mhealthc_mhealthm = first(median_oops) / last(median_oops),
          trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
   ungroup() %>% 
-  select(survey, mhealthc_mhealthm, healthc_healthm, trim_mhealthc_mhealthm) %>% 
+  select(survey, mhealthc_mhealthm, healthc_healthm, healthm_healthc, trim_mhealthc_mhealthm) %>% 
   distinct() %>% 
   mutate( order = seq_along(survey),
           survey2 = fct_reorder(survey, desc(order) ))
+
 
 # get number where health module is higher
 nhealth_higher_zero <- tab_health_over_consumption_zero %>% 
@@ -265,15 +317,15 @@ nhealth_higher_zero <- tab_health_over_consumption_zero %>%
 ```{r mean_oops_zeroplus, echo=FALSE}
 # Graph Average Means by survey - positive oops
 tab_health_over_consumption_zero %>% 
-  ggplot(aes( survey2 ,healthc_healthm)) +
+  ggplot(aes( survey2 ,healthm_healthc)) +
   geom_point(color="blue") +
   coord_flip() +
-  ggtitle("Mean OOPs from the consumption module over the health module") +
+  ggtitle("Mean OOPs from the health module over the consumption module") +
   labs(subtitle = "For households reporting positive OOPs") +
   xlab("") +
   ylab("Share") +
   geom_hline(yintercept=1, alpha=3, linetype = "dashed") +
-  scale_y_continuous(breaks = seq(0,2,0.25), limits = c(0,2))
+  scale_y_continuous(breaks = seq(0,19,1), limits = c(0,19))
 ```
 
 On average `r round(per_zero$mean_zero2[[1]]*100,1)`% and `r round(per_zero$mean_zero2[[2]]*100,1)`% of the households report zero OOPs in the consumption and health module respectively.

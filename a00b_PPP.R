@@ -5,6 +5,7 @@ library(tidyverse)
 library(quantmod)
 library(magrittr)
 library(dplyr)
+library(WDI)
 
 
 rm(list=ls())
@@ -12,26 +13,14 @@ rm(list=ls())
 
 # Load --------------------------------------------------------------------
 
-# Country currency tibble
-tab_currency <- read_csv("~/Dropbox/LSMS_Compilation/Data/Tab_currencies_country.csv")
-tab_currency
-
-# PPP data
-tab_ppp <- read_csv("~/Dropbox/LSMS_Compilation/Data/2011_PPP_household_expenditures.csv") %>% 
-  rename(country = Country)
-
 # Df nontidy
 df_nontidy <- read.csv2("LSMScompilation_nontidy.csv")
 
+# Df tidy
+df_tidy <- read.csv2("LSMScompilation_tidy.csv")
+
 
 # Prepare Data ------------------------------------------------------------
-
-# Table with country-currency-PPP
-tab_country <- tab_currency %>% 
-  left_join(tab_ppp) %>% 
-  na.omit() %>% 
-  mutate(country = ifelse(country=="Bosnia and Herzegovina","Bosnia",country)) # Fix bosnia
-
 
 # Countries to evaluate - those in the survey
 surveys <- df_nontidy %>% 
@@ -44,124 +33,70 @@ country_list <- surveys$survey %>%
   str_extract(pattern = "[A-Z]*[a-z]*")
 
 # Include surveys
-survey_country_list <- tibble(country = country_list,survey = surveys$survey)
+survey_country_list <- tibble(country = country_list,survey = surveys$survey) %>% 
+  mutate(year = as.numeric(str_extract(survey,pattern = "\\d*$") ))
 
-# Get min and max year per country
-country_years <- surveys %>% 
-  left_join(survey_country_list) %>% 
-  mutate(aux_year = as.numeric( str_extract(survey,pattern = "\\d*$") ),
-         year = ifelse(aux_year<100,aux_year+2000,aux_year)) %>% 
-  group_by(country) %>% 
-  summarise(min_year = min(year,na.rm = TRUE),
-            max_year = max(year,na.rm = TRUE))
+survey_country_list
+
+# Grab inflation and PPP ---------------------------------------------------------
+
+country_codes <- c("BG","BA","AL","UG","NG","TZ","MW","IQ","GH","ET")
+ppp_inflation <- WDI(country=country_codes, indicator = c("PA.NUS.PPP","FP.CPI.TOTL"),
+    start = 1988)
+
+# Grab 2011 inflation
+tab_adjustment <- ppp_inflation %>% 
+  filter(year==2011) %>% 
+  select(country, `FP.CPI.TOTL`) %>%
+  rename(cpi_2011 = `FP.CPI.TOTL`) %>% 
+  right_join(ppp_inflation) %>% 
+  mutate(cpi = `FP.CPI.TOTL`/cpi_2011) %>% 
+  select(country,year,cpi,`PA.NUS.PPP`) %>% 
+  mutate(adjustment = `PA.NUS.PPP`/cpi,
+         country = ifelse(country=="Bosnia and Herzegovina","Bosnia",country)) %>% 
+  as_tibble()
+
+tab_adjustment
+
+# Join WDI inforamtion with surveys ---------------------------------------
+
+adjustment_ready <- survey_country_list %>% left_join(tab_adjustment)
+
+# Unsuccesful in: Bosnia 2001, Bosnia 2004, Ghana 1989, Ghana 1988
+adjustment_ready %>% filter(is.na(adjustment))
+
+# Repalce with some values
+tab_adjustment <- adjustment_ready %>% 
+  mutate(adjustment = case_when(
+    survey=="Bosnia_2004" ~ `PA.NUS.PPP`/ 84.5/103.6713, # Information from CPI from FRED, 2010 base that is why is divided
+    survey=="Bosnia_2001" ~ `PA.NUS.PPP` / 84.5/ (1+(0.547/100))*(1+(0.313/100))*(1+(4.573/100)) /103.6713 ,
+    survey=="Ghana_1989" ~ 108.7268 / cpi/	1.054099e-02, # used closest year for PPP ER 1990
+    survey=="Ghana_1988" ~ 108.7268 / cpi/	1.054099e-02, # used closest year for PPP ER 1990
+    TRUE ~ adjustment # all the rest
+  )) %>% 
+  select(country,year, survey,cpi,adjustment)
 
 
-# Create final table to use to grab information - it has each country used, with max and min year and PPP
-df_survey_currency <- country_years %>% 
-  left_join(tab_country) %>% 
-  mutate(aux_currency = str_c(currency,"=X"))
-  
-df_survey_currency
-
-
-# Extract Forex info for each country -------------------------------------
-
-
-# Extracts Forex information between date1 and date2 and returns the latest FX
-grab_closeyear_fx <- function(date1,date2,currency){
-  #name_fx <- str_c(currency,"=X") # option without aux_currency
-  name_fx <- currency # option with aux_currency
-  price <- getSymbols(name_fx,src="yahoo",from=date1, to =date2, auto.assign = FALSE)
-  df <- price %>% tibble() 
-  df_ele <- df$.[]
-  last_fx <- df_ele$`UGX=X.Close` %>% tail(1)
-  last_fx
-}
-
-
-# LOOP to extract information for each country
-
-# List to store
-datalist <-  list()
-
-# country list to loop
-df_survey_currency
-
-list <- df_survey_currency %>%
-  filter(min_year>2003) %>% 
-  select(country) 
-
-list
-
-# counter
-i = 1
-for (cty in list$country){
-  aux_df <- df_survey_currency %>% 
-    filter(country==cty)
-    
-  # Country info
-  min_year <- aux_df$min_year[[1]]
-  max_year <- aux_df$max_year[[1]]
-  curr <- aux_df$aux_currency[[1]]
-  
-  
-  # For calculations
-  years <- seq(min_year,max_year) %>% as.character()
-  start <- "-12-20"
-  end <- "-12-31"
-    
-  start_list <- str_c(years,start)
-  end_list <- str_c(years,end)
-  
-  # Get closing year FX for all years of cty
-  cty_fx <- map2(start_list,end_list,grab_closeyear_fx, currency=curr) %>% unlist
-  cty_fx2 <- tibble(cty_fx,year = years, country = cty)
-  
-  # Add to storing df
-  datalist[[i]] <-  cty_fx2
-  i = i + 1
-
-}
+# Adjust tidydatasets -----------------------------------------------------
 
 
 
+# Tidy dataset
+df_tidy_adjusted <- df_tidy %>% left_join(tab_adjustment, by="survey") %>% 
+  mutate_at(c("food_consumption","nonsub_consumption","nonhealth_consumption","nonfood_nohealth_consumption","oops"),funs(. /adjustment))
 
-price <- getSymbols("ALL=X",src="yahoo",from="2002-12-20", to = "2002-12-31", auto.assign = FALSE)
-price
+tab <- df_tidy_adjusted %>% 
+  group_by(survey, module) %>% 
+  summarise(mean_oops = mean(oops, na.rm = TRUE)) %>% 
+  mutate(mean_oops = mean_oops %>% round(2) )
+
+tab
 
 
 
 
 
 
-# Uganda
-years <- c(seq(2005,2014)) %>% as.character()
-start <- "-12-20"
-end <- "-12-31"
-
-start_list <- str_c(years,start)
-end_list <- str_c(years,end)
 
 
-grab_closeyear_fx <- function(date1,date2,currency){
-  name_fx <- str_c(currency,"=X")
-  price <- getSymbols(name_fx,src="yahoo",from=date1, to =date2, auto.assign = FALSE)
-  df <- price %>% tibble() 
-  df_ele <- df$.[]
-  last_fx <- df_ele$`UGX=X.Close` %>% tail(1)
-  last_fx
-}
-
-# Get closing year FX for all years of Uganda
-uganda <- map2(start_list,end_list,grab_closeyear_fx, currency="ALL") %>% unlist()
-uganda
-
-df_fx <- tibble(country = "Uganda", fx = uganda ,year = as.numeric(years)) 
-df_fx
-  
-
-
-
-grab_closeyear_fx("2012-12-20","2015-12-31","UGX")
-getSymbols("UGX=X",src="yahoo",from="2010-12-30", to ="2010-12-30" )
 

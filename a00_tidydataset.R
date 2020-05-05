@@ -17,10 +17,9 @@ df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Fi
                                 nonfood_nonhealth_consumption = col_double(),
                                 nonhealth_consumption = col_double(),
                                 food_consumption = col_double(),
-                                year = col_double()
+                                year = col_double(),
+                                hhweight = col_double()
                                 ))
-
-
 
 # Make Tidy -----------------------------------------------------------
 
@@ -30,13 +29,13 @@ df_rel <- df %>%
          food_consumption, nonhealth_consumption, nonfood_nohealth_consumption, 
          health_consumption,healthm_oops, healthm_recall2, health_recall2, healthm_items, health_items,
          hhead_married, hhead_female, hhead_age,
-         episodic_hosp, year)
+         episodic_hosp, year, hhweight)
 
 
 # Pivot - OOPs
 df_pivot <- df_rel %>% select(survey,hhid_compilation,healthm_oops,health_consumption, consumption_quintile,
                               food_consumption, nonsub_consumption, nonhealth_consumption, nonfood_nohealth_consumption,
-                              hhead_married, hhead_female, hhead_age,episodic_hosp, year) %>% 
+                              hhead_married, hhead_female, hhead_age,episodic_hosp, year, hhweight) %>% 
   pivot_longer(c(health_consumption, healthm_oops),names_to = "module", values_to = "oops") %>% 
   filter(oops>-1) %>% # Take out NAs and keep zeros
   mutate(module = case_when(
