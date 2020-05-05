@@ -190,35 +190,47 @@ df_adjusted_well <- df_tidy_adjusted %>%
 df_adjusted_well <- df_adjusted_well %>% 
   full_join(list_corrected_surveys)
 
+# Check
 tab <- df_adjusted_well %>% 
   group_by(survey, module) %>% 
   summarise(mean_oops = mean(oops, na.rm = TRUE)) %>% 
   mutate(mean_oops = mean_oops %>% round(2) )
 
-tab
 
 # Save Adjusted Df --------------------------------------------------------
 
+# Save as tidy dataset
 df_tidy_adjusted <- df_adjusted_well %>% 
   rename(year = year.x) %>% 
   select(-cpi,-PA.NUS.PPP,-adjustment,-year.y)
 
-head(df_tidy_adjusted)
-
+# Save non-tidy
 df_nontidy_adjusted <- df_tidy_adjusted %>% 
-  #group_by(hhid_compilation) %>% 
-  mutate(obs = row_number()) %>% 
-  pivot_wider(names_from = module, values_from = oops) %>% 
+  mutate(n = row_number()) %>% 
+  pivot_wider(names_from = module,values_from = oops) %>% 
   group_by(hhid_compilation) %>% 
-  mutate(Health = max(Health, na.rm = FALSE),
-         Consumption = max(Consumption, na.rm = FALSE)) %>% 
-  slice(1)
+  mutate(Consumption = first(Consumption),
+         Health = last(Health)) %>% 
+  select(-n) %>% 
+  ungroup() %>% 
+  distinct()
+  
+head(df_nontidy_adjusted)
+
+  
+
+# Check - good
+tab2 <- df_nontidy_adjusted %>% group_by(survey) %>% 
+  summarise(Health = mean(Health, na.rm = TRUE),
+            Consumption = mean(Consumption, na.rm = TRUE))
 
 
 # Tidy adjusted
-write_csv2(df_tidy_adjusted, "LSMScompilation_tidy_PPPadjusted.csv")
+saveRDS(df_tidy_adjusted, file = "LSMScompilation_tidy_PPPadjusted")
+write_csv(df_tidy_adjusted, "LSMScompilation_tidy_PPPadjusted.csv")
 # Non-Tidy adjusted
-write.csv2(df_nontidy_adjusted, "LSMScompilation_nontidy_PPPadjusted.csv")
+saveRDS(df_nontidy_adjusted, file = "LSMScompilation_nontidy_PPPadjusted")
+write.csv(df_nontidy_adjusted, "LSMScompilation_nontidy_PPPadjusted.csv")
 
 
 
