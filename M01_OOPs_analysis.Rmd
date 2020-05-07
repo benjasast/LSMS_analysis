@@ -22,10 +22,16 @@ library(bookdown)
 rm(list=ls())
 
 # Load data
-df <- read.csv2("LSMScompilation_tidy.csv")
-df_nontidy <- read.csv2("LSMScompilation_nontidy.csv")
-tab_recall <- read.csv2("LSMScompilation_recall_nitems.csv")
+df <- readRDS("LSMScompilation_tidy_outliers")
+df_nontidy <- readRDS("LSMScompilation_nontidy_outliers")
+tab_recall <- readRDS("LSMScompilation_recall_nitems")
 tab_survey_names <- read.csv("~/Dropbox/LSMS_Compilation/Analysis/Tables_Figures/table1_survey_description.csv")
+hhinfo <- readRDS("LSMScompilation_hhinfo")
+
+# Add hhinfo to DFs
+df <- df %>% left_join(hhinfo, by="hhid_compilation")
+df_nontidy <- df_nontidy %>% left_join(hhinfo, by="hhid_compilation")
+
 ```
 
 # Search Strategy
@@ -65,7 +71,7 @@ tab1_descriptive <- tab_survey_names %>% select(Survey, survey.name, LSMS) %>%
   rename(`Survey Name` = survey.name,
          `LSMS Status` = LSMS,
          survey = Survey) %>% 
-  inner_join(tab_recall) %>% 
+  inner_join(tab_recall) %>% # Guarantees to have only those that have both modules
   pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
   group_by(survey) %>% 
   mutate(`Items Health Module` = first(nitems_Health),
@@ -76,23 +82,49 @@ tab1_descriptive <- tab_survey_names %>% select(Survey, survey.name, LSMS) %>%
   select(Survey, `Survey Name`, `LSMS Status`, `Items Health Module`,`Items Consumption Module`, `Avg. Recall Health Module`, `Avg. Recall Consumption Module` ) %>% 
   distinct()
 
+# What are the surveys without hhweights?
+surveys_nohhweight <- df_bothm_nontidy  %>% select(hhid_compilation, survey, hhweight) %>% 
+  mutate(weight_missing = is.na(hhweight)) %>% 
+  group_by(survey) %>% 
+  summarise(per_missing = mean(weight_missing, na.rm = TRUE))
+
+
 # Grab number of observations per survey
-obs <- df_nontidy %>% 
-  select(hhid_compilation, healthm_oops, health_consumption, survey, nonhealth_consumption) %>% 
-  filter(healthm_oops>-1,health_consumption>-1) %>%  # take NAs out 
+obs <- df_bothm_nontidy %>% 
+  left_join(surveys_nohhweight) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>% # Give weight 1 to surveys withoyut hhweights
+  select(hhid_compilation, Health, Consumption, survey, nonhealth_consumption, hhweight) %>% 
+  filter(Health>-1,Consumption>-1) %>%  # take NAs out 
   group_by(survey) %>% 
   summarise(Observations = n(),
-            `Mean Non-Health Consumption` = round( mean(nonhealth_consumption, na.rm = TRUE),1),
-            `Mean OOPs Health Module` = round( mean(healthm_oops, na.rm = TRUE),1),
-            `Mean OOPs Consumption Module`  = round( mean(health_consumption, na.rm = TRUE),1)) %>% 
+            `Mean Non-Health Consumption` = round( weighted.mean(nonhealth_consumption,hhweight, na.rm = TRUE),1),
+            `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1),
+            `Mean OOPs Consumption Module`  = round( weighted.mean(Consumption,hhweight, na.rm = TRUE),1)) %>% 
+  left_join(surveys_nohhweight) %>%  # include again per_missing for formatting
   rename(Survey = survey)
+
+# Put asterisk on numbers from surveys without hhweights
+obs <- obs %>% 
+  mutate(
+    `Mean Non-Health Consumption` = ifelse(per_missing==1, str_c(as.character(`Mean Non-Health Consumption`),"*"),`Mean Non-Health Consumption`  ),
+    `Mean OOPs Health Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Health Module`),"*"),`Mean OOPs Health Module`  ),
+    `Mean OOPs Consumption Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Consumption Module`),"*"),`Mean OOPs Consumption Module`  )
+  )
 
 # Put observations in
 tab1_descriptive <- tab1_descriptive %>% 
-  left_join(obs)
+  left_join(obs) %>% 
+  select(-per_missing)
 
+# Table
 kable(tab1_descriptive) %>% 
-  kable_styling(bootstrap_options = c("striped", "hover"))
+    kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+footnote(general = "Consumption averages are expressed in 2011 USD PPP. The surveys of Ghana_2006 through Ghana_2017 do not belong to the LSMS program, but they continue the work of previous LSMS surveys in Ghana.
+         * sampling weights were not available for calculation")
+  
+
+
+
 ```
 
 
@@ -113,13 +145,13 @@ scatter_xy <- function(survey_name){
 # Filter survey and take outliers out
 data <- df_bothm_nontidy %>% 
   filter(survey==survey_name) %>%
-  select(hhid_compilation,health_consumption,healthm_oops) %>% 
+  select(hhid_compilation,Consumption,Health) %>% 
   na.omit() %>% 
-  mutate(z_health = healthm_oops / sd(healthm_oops, na.rm = TRUE),
-         z_consumption = health_consumption / sd(health_consumption, na.rm = TRUE)) %>% 
+  mutate(z_health = Health / sd(Health, na.rm = TRUE),
+         z_consumption = Consumption / sd(Consumption, na.rm = TRUE)) %>% 
   filter(z_health<2, z_consumption<2) %>%  # take out all those with z>2 for viz purposes
-  rename(`Health Module` = healthm_oops,
-         `Consumption Module` = health_consumption)
+  rename(`Health Module` = Health,
+         `Consumption Module` = Consumption)
 
 # Limit for both axis for viz  
 max_scale <- data %$% 
@@ -174,6 +206,7 @@ bothm_surveylist <- surveys_bothmodules$survey %>%
 # get all the graphs
 hex_graphs <- bothm_surveylist %>%  map(scatter_xy)
 
+
 # Put all graphs in one page
 grid.arrange(hex_graphs[[1]],hex_graphs[[2]],hex_graphs[[3]],hex_graphs[[4]],
              hex_graphs[[5]],hex_graphs[[6]],hex_graphs[[7]],hex_graphs[[8]],
@@ -194,7 +227,7 @@ All surveys that have coefficients close to 1 have equal average recall periods 
 # Create simple regression
 survey_model <- function(survey_name){
   df_aux <- df_bothm_nontidy %>% filter(survey==survey_name)
-  model <- lm(healthm_oops ~ health_consumption , data = df_aux)
+  model <- lm(Health ~ Consumption , data = df_aux)
   coef(model)[[2]]
 }
 
@@ -225,34 +258,34 @@ kable(tab_reg) %>%
 
 # Average OOPs
 
-```{r get_means , include=FALSE}
+```{r get_means , include=FALSE, warning=FALSE, message=FALSE}
 
-# Grab means by survey and module
-tab_mean_oops <- df_bothm %>% 
-  group_by(survey,module) %>% 
-  summarise(mean_oops = mean(oops, na.rm = TRUE),
-            median_oops = median(oops, na.rm=TRUE),
-            obs = n())
+# Create DF with "fake" weights for surveys without them
+df_bothm_nontidy_weightcorrected <- df_bothm_nontidy %>% 
+  left_join(surveys_nohhweight) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>%  # Give weight 1 to surveys withoyut hhweights 
+  filter(Health>-1,Consumption>-1)  # take NAs out 
 
-# Grab OOPs of health module over OOPs of consumption module
-tab_health_over_consumption <- tab_mean_oops %>% 
+df_bothm_tidy_weightcorrected <- df_bothm %>% 
+  left_join(surveys_nohhweight) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>%  # Give weight 1 to surveys withoyut hhweights 
+  filter(oops>-1)  # take NAs out 
+
+# Grab means by survey and module - and order surveys
+tab_mean_oops <- df_bothm_nontidy_weightcorrected %>% 
   group_by(survey) %>% 
-  mutate(healthm_healthc = last(mean_oops) / first(mean_oops), # consumption over health
-         healthc_healthm = first(mean_oops) / last(mean_oops), # health over consumption
-         mhealthc_mhealthm = first(median_oops) / last(median_oops),
-         trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
-  ungroup() %>% 
-  select(survey, mhealthc_mhealthm, healthc_healthm, healthm_healthc, trim_mhealthc_mhealthm) %>% 
-  distinct() %>% 
-  mutate( order = seq_along(survey),
-          survey2 = fct_reorder(survey, desc(order) ))
-
-tab_health_over_consumption
+  summarise(mean_Consumption = weighted.mean(Consumption,hhweight, na.rm = TRUE),
+            mean_Health = weighted.mean(Health,na.rm = TRUE),
+            obs = n()) %>% 
+  mutate(Health_over_Consumption = mean_Health / mean_Consumption,
+         Consumption_over_Health = mean_Consumption / mean_Health,
+          order = seq_along(survey),
+          survey2 = fct_reorder(survey, desc(order) ) )
 
 
 # get number where health module is higher
-nhealth_higher <- tab_health_over_consumption %>% 
-  filter(healthc_healthm<1) %>% 
+nhealth_higher <- tab_mean_oops %>% 
+  filter(Health_over_Consumption>1) %>% 
   nrow()
 
 ```
@@ -263,21 +296,21 @@ In our sample of surveys, the mean OOPs in the health module were higher than in
 
 ```{r mean_graph, echo=FALSE}
 # Graph Average Means by survey
-tab_health_over_consumption %>% 
-  ggplot(aes( survey2 ,healthm_healthc)) +
+tab_mean_oops %>% 
+  ggplot(aes( survey2 ,Health_over_Consumption)) +
   geom_point(color="blue") +
   coord_flip() +
   ggtitle("Mean OOPs from the health module over the consumption module") +
   xlab("") +
   ylab("Ratio") +
   geom_hline(yintercept=1, alpha=3, linetype = "dashed") +
-  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,12))
+  scale_y_continuous(breaks = seq(0,7,1), limits = c(0,7))
 ```
 
 ```{r prep_zero_oops, include=FALSE}
 
 # Percentage by survey with zero oops
-per_zero <- df_bothm %>% 
+per_zero <- df_bothm_tidy_weightcorrected %>% 
   group_by(survey,module) %>% 
   mutate(zero_oops = oops==0) %>% 
   summarise(mean_zero = mean(zero_oops, na.rm = TRUE)) %>% 
@@ -286,22 +319,19 @@ per_zero <- df_bothm %>%
   summarise(mean_zero2 = mean(mean_zero, na.rm = TRUE))
 
 # Grab means for oops>0
-tab_mean_oops_zero <- df_bothm %>% 
+tab_mean_oops_zero <- df_bothm_tidy_weightcorrected %>% 
   filter(oops>0) %>% 
   group_by(survey,module) %>% 
   summarise(mean_oops = mean(oops, na.rm = TRUE),
-            median_oops = median(oops, na.rm=TRUE),
             obs = n())
 
 # Grab OOPs of health module over OOPs of consumption module
 tab_health_over_consumption_zero <- tab_mean_oops_zero %>% 
   group_by(survey) %>% 
   mutate(healthm_healthc = last(mean_oops) / first(mean_oops), # consumption over health
-         healthc_healthm = first(mean_oops) / last(mean_oops), # health over consumption
-         mhealthc_mhealthm = first(median_oops) / last(median_oops),
-         trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
+         healthc_healthm = first(mean_oops) / last(mean_oops) ) %>%  # health over consumption
   ungroup() %>% 
-  select(survey, mhealthc_mhealthm, healthc_healthm, healthm_healthc, trim_mhealthc_mhealthm) %>% 
+  select(survey, healthc_healthm, healthm_healthc) %>% 
   distinct() %>% 
   mutate( order = seq_along(survey),
           survey2 = fct_reorder(survey, desc(order) ))
@@ -325,7 +355,7 @@ tab_health_over_consumption_zero %>%
   xlab("") +
   ylab("Share") +
   geom_hline(yintercept=1, alpha=3, linetype = "dashed") +
-  scale_y_continuous(breaks = seq(0,19,1), limits = c(0,19))
+  scale_y_continuous(breaks = seq(0,15,1), limits = c(0,15))
 ```
 
 On average `r round(per_zero$mean_zero2[[1]]*100,1)`% and `r round(per_zero$mean_zero2[[2]]*100,1)`% of the households report zero OOPs in the consumption and health module respectively.
@@ -336,13 +366,12 @@ Figure 2 exhibits that `r nhealth_higher_zero` out of `r length(surveys_bothmodu
 
 ```{r repetition_zeros, include=FALSE}
 
-df_zero <- df_bothm %>% 
-  group_by(hhid_compilation) %>% 
-  mutate(
-    c0_h0 = (first(oops)==0 & last(oops)==0),
-    c1_h0 = (first(oops)>0 & last(oops)==0),
-    c0_h1 = (first(oops)==0 & last(oops)>0),
-    c1_h1 = (first(oops)>0 & last(oops)>0 ) )
+df_zero <- df_bothm_nontidy %>%
+    mutate(
+    c0_h0 = Consumption==0 & Health==0,
+    c1_h0 = Consumption>0 & Health==0,
+    c0_h1 = Consumption==0 & Health>0,
+    c1_h1 = Consumption>0 & Health>0 )
 
 df_zero2 <- df_zero %>% 
   select(hhid_compilation,survey, c0_h0, c1_h0, c0_h1, c1_h1) %>% 
@@ -361,7 +390,6 @@ per_concordance <- tab_zero_reps %>%
   summarise(both_zero2 = mean(both_zero, na.rm = TRUE),
             both_pos2 = mean(posc_poch, na.rm = TRUE))
 
-per_concordance
 
 ```
 
@@ -409,20 +437,17 @@ Figure 3 exhibits the mean OOPs of the consumption module over the health module
 ```{r mean_consumption_quintile, echo=FALSE}
 
 # Grab means by survey and module, and consumption quintile
-tab_mean_cq <- df_bothm %>% 
+tab_mean_cq <- df_bothm_tidy_weightcorrected %>% 
   group_by(survey,module,consumption_quintile) %>% 
-  summarise(mean_oops = mean(oops, na.rm = TRUE),
-            median_oops = median(oops, na.rm=TRUE),
+  summarise(mean_oops = weighted.mean(oops, hhweight, na.rm = TRUE),
             obs = n())
 
 # Grab OOPs of health module over OOPs of consumption module
 tab_hc_cq <- tab_mean_cq %>% 
   group_by(survey,consumption_quintile) %>% 
-  mutate(healthc_healthm = first(mean_oops) / last(mean_oops),
-         mhealthc_mhealthm = first(median_oops) / last(median_oops),
-         trim_mhealthc_mhealthm = if_else(mhealthc_mhealthm>2,2,mhealthc_mhealthm)) %>% 
+  mutate(Health_over_Consumption = last(mean_oops) / first(mean_oops) ) %>% 
   ungroup() %>% 
-  select(survey, consumption_quintile, mhealthc_mhealthm, healthc_healthm, trim_mhealthc_mhealthm) %>% 
+  select(survey, consumption_quintile, Health_over_Consumption) %>% 
   distinct() %>% 
   mutate( order = seq_along(survey),
           survey2 = fct_reorder(survey, desc(order) )) %>% # Create order for surveys
@@ -431,15 +456,16 @@ tab_hc_cq <- tab_mean_cq %>%
 
 # Graph mean
 tab_hc_cq %>% 
-  ggplot(aes(x=survey2,y=healthc_healthm, 
+  ggplot(aes(x=survey2,y=Health_over_Consumption, 
              group = reorder(consumption_quintile, -consumption_quintile), 
              fill = consumption_quintile) ) +
   geom_bar(position='dodge', stat='identity') +
   coord_flip() +
-  ggtitle("Mean OOPs from the consumption module over the health module") +
+  ggtitle("Mean OOPs from the health module over the consumption module") +
   labs(subtitle = "By consumption quintile") +
   xlab("") +
-  ylab("Share") +
+  ylab("Ratio") +
+  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,12)) +
   geom_hline(yintercept=1, alpha=3, linetype = "dashed")
 
 
@@ -459,16 +485,19 @@ In Figure 6, the CHE10% estimates using OOPs from the health module, and consump
 
 ```{r che_graph, echo=FALSE, message=FALSE, warning=FALSE}
 
-df_che <- df_bothm %>% 
+df_che <- df_bothm_tidy_weightcorrected %>% 
+  left_join(hhinfo %>% select(hhid_compilation,hhsize)) %>% 
+  filter(!is.na(hhsize)) %>% 
   mutate(total_consumption =  nonhealth_consumption + oops,
          che10 = (oops/total_consumption)>.1,
-         che25 = (oops/total_consumption)>.25)
-
+         che25 = (oops/total_consumption)>.25,
+         pop_weight = hhweight*hhsize)
 
 tab_che <- df_che %>% 
   group_by(survey,module) %>% 
-  summarise(mean_che10 = mean(che10, na.rm = TRUE),
-            mean_che25 = mean(che25, na.rm = TRUE))
+  summarise(mean_che10 = weighted.mean(che10,pop_weight, na.rm = TRUE),
+            mean_che25 = weighted.mean(che25,pop_weight, na.rm = TRUE))
+
 
 tab_che %>% 
   ggplot(aes(survey,mean_che10, color = module)) +

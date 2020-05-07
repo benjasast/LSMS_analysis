@@ -18,8 +18,12 @@ df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Fi
                                 nonhealth_consumption = col_double(),
                                 food_consumption = col_double(),
                                 year = col_double(),
-                                hhweight = col_double()
+                                hhweight = col_double(),
+                                hhsize = col_double()
                                 ))
+tab <- df %>% select(survey) %>% 
+  distinct()
+
 
 # Make Tidy -----------------------------------------------------------
 
@@ -29,7 +33,7 @@ df_rel <- df %>%
          food_consumption, nonhealth_consumption, nonfood_nohealth_consumption, 
          health_consumption,healthm_oops, healthm_recall2, health_recall2, healthm_items, health_items,
          hhead_married, hhead_female, hhead_age,
-         episodic_hosp, year, hhweight)
+         episodic_hosp, year, hhweight, hhsize)
 
 
 # Pivot - OOPs
@@ -72,15 +76,25 @@ df_tidy <- df_pivot %>%
 
 head(df_tidy)
 
+
+# Household information (to use later with filtered dataset)
+hhinfo <- df_rel %>% select(contains(c("hhweight","hhead","episodic","consumption_quintile","hhid_compilation","hhsize")))
+
+
+
 # Save --------------------------------------------------------------------
 
 # Tidydataset
-write_csv2(df_tidy, "LSMScompilation_tidy.csv")
-# Table with characteristics of each survey
-write.csv2(tab_recall_len, "LSMScompilation_recall_nitems.csv")
-# non-tidy dataset
-write.csv2(df_rel, "LSMScompilation_nontidy.csv")
+saveRDS(df_tidy, file = "LSMScompilation_tidy")
 
+# Table with characteristics of each survey
+saveRDS(tab_recall_len, file = "LSMScompilation_recall_nitems")
+
+# non-tidy dataset
+saveRDS(df_rel, file = "LSMScompilation_nontidy")
+
+#hh info
+saveRDS(hhinfo, file= "LSMScompilation_hhinfo")
 
 
 

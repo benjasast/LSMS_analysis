@@ -2,7 +2,6 @@
 # Adjust by PPP -----------------------------------------------------------
 
 library(tidyverse)
-library(quantmod)
 library(magrittr)
 library(dplyr)
 library(WDI)
@@ -14,10 +13,10 @@ rm(list=ls())
 # Load --------------------------------------------------------------------
 
 # Df nontidy
-df_nontidy <- read.csv2("LSMScompilation_nontidy.csv")
+df_nontidy <- readRDS("LSMScompilation_nontidy")
 
 # Df tidy
-df_tidy <- read.csv2("LSMScompilation_tidy.csv")
+df_tidy <- readRDS("LSMScompilation_tidy")
 
 
 # Prepare Data ------------------------------------------------------------
@@ -211,26 +210,19 @@ df_nontidy_adjusted <- df_tidy_adjusted %>%
   group_by(hhid_compilation) %>% 
   mutate(Consumption = first(Consumption),
          Health = last(Health)) %>% 
-  select(-n) %>% 
+  select(-n,-recall,-nitems) %>% 
   ungroup() %>% 
   distinct()
-  
-head(df_nontidy_adjusted)
-
-  
 
 # Check - good
 tab2 <- df_nontidy_adjusted %>% group_by(survey) %>% 
   summarise(Health = mean(Health, na.rm = TRUE),
             Consumption = mean(Consumption, na.rm = TRUE))
 
-
 # Tidy adjusted
 saveRDS(df_tidy_adjusted, file = "LSMScompilation_tidy_PPPadjusted")
-write_csv(df_tidy_adjusted, "LSMScompilation_tidy_PPPadjusted.csv")
 # Non-Tidy adjusted
 saveRDS(df_nontidy_adjusted, file = "LSMScompilation_nontidy_PPPadjusted")
-write.csv(df_nontidy_adjusted, "LSMScompilation_nontidy_PPPadjusted.csv")
 
 
 
