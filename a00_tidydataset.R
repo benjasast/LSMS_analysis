@@ -19,10 +19,9 @@ df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Fi
                                 food_consumption = col_double(),
                                 year = col_double(),
                                 hhweight = col_double(),
-                                hhsize = col_double()
+                                hhsize = col_double(),
+                                episodic_hosp = col_logical()
                                 ))
-tab <- df %>% select(survey) %>% 
-  distinct()
 
 
 # Make Tidy -----------------------------------------------------------
