@@ -114,6 +114,8 @@ tab <- df_money_criteria2 %>%
   summarise(mean = mean(value, na.rm = TRUE)) %>% 
   na.omit()
 
+tab_mean <- tab %>% pivot_wider(id_cols = c(survey,money_var), names_from = money_var, values_from = mean)
+
 # Observations remaining
 tab2 <- df_money_criteria2 %>% 
   select(hhid_compilation,survey) %>% 

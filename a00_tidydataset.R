@@ -20,8 +20,9 @@ df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Fi
                                 year = col_double(),
                                 hhweight = col_double(),
                                 hhsize = col_double(),
-                                episodic_hosp = col_logical()
-                                ))
+                                episodic_hosp = col_logical(),
+                                urban = col_logical(
+                                )))
 
 
 # Make Tidy -----------------------------------------------------------
@@ -32,7 +33,7 @@ df_rel <- df %>%
          food_consumption, nonhealth_consumption, nonfood_nohealth_consumption, 
          health_consumption,healthm_oops, healthm_recall2, health_recall2, healthm_items, health_items,
          hhead_married, hhead_female, hhead_age,
-         episodic_hosp, year, hhweight, hhsize)
+         episodic_hosp, year, hhweight, hhsize, urban)
 
 
 # Pivot - OOPs
@@ -77,7 +78,7 @@ head(df_tidy)
 
 
 # Household information (to use later with filtered dataset)
-hhinfo <- df_rel %>% select(contains(c("hhweight","hhead","episodic","consumption_quintile","hhid_compilation","hhsize")))
+hhinfo <- df_rel %>% select(contains(c("hhweight","hhead","episodic","consumption_quintile","hhid_compilation","hhsize", "urban")))
 
 
 

@@ -16,8 +16,9 @@ library(kableExtra)
 library(hexbin)
 library(gridExtra)
 library(bookdown)
-
-
+library(sandwich)
+library(lmtest) # for coeftest() 
+library(sjPlot)
 
 rm(list=ls())
 
@@ -25,8 +26,10 @@ rm(list=ls())
 df <- readRDS("LSMScompilation_tidy_outliers")
 df_nontidy <- readRDS("LSMScompilation_nontidy_outliers")
 tab_recall <- readRDS("LSMScompilation_recall_nitems")
-tab_survey_names <- read.csv("~/Dropbox/LSMS_Compilation/Analysis/Tables_Figures/table1_survey_description.csv")
+tab_survey_names <- read.csv("~/Dropbox/LSMS_Compilation/Analysis/Tables_Figures/table1_survey_description.csv") %>% 
+  arrange(survey)
 hhinfo <- readRDS("LSMScompilation_hhinfo")
+style_info <- read_csv("~/Dropbox/LSMS_Compilation/Analysis/Tables_Figures/table2_healthmodule_taxonomy.csv")
 
 # Add hhinfo to DFs
 df <- df %>% left_join(hhinfo, by="hhid_compilation")
@@ -51,7 +54,9 @@ The surveys went through a compilation process, where information on household's
 
 OOPs were calculated for each household on the health and consumption module. In the health module the OOPs were calculated as the sum of all health expenditures declared by each individual household member, and then adjusted to represent a 1-year recall period. The OOPs in the consumption module were calculated in similar fashion, by adding all health expenditures declared by the household in the module, and then adjusting them to a 1-year recall period. 
 
-Despite a similar process to calculate OOPs in both modules, it is relevant to notice that each module captures OOPs in very different ways. The health module is not purposedly build to measure consumption, and OOPs are added as an extra, this results in three different styles OOPs can be captured in a health module. The first style is health care utilization, where each household member is asked whether or not they have used a specific health service in a determined amount of time. If they answer yes, a sequence of questions about the specific service ensues, including OOPs. On the other hand, if they answer no the sequence is skipped. The second style is episodic, where each household member is asked if they have suffered an illness or injury in the recent past. Similarly, if they answer yes a sequence of questions continues including OOPs. The third and least popular is the direct style, where each household member reports their expenses for a list of different health services and items. The direct style is not attached to the utilization of health services, or an episode of illness, every household member has to answer. The consumption module on the other hand is build to measure consumption, each household reports their expenses for a specified list of products, and services without a possibility of skipping questions.   
+Despite a similar process to calculate OOPs in both modules, it is relevant to notice that each module captures OOPs in very different ways. The health module is not purposedly built to measure consumption, and OOPs are added as an extra, this results in three different styles in which OOPs can be captured in the health module (Exhibited in Figure 1). The first style is health care utilization, where each household member is asked whether or not they have used a specific health service in a determined amount of time. If they answer yes, a sequence of questions about the specific service ensues, including OOPs. On the other hand, if they answer no the sequence is skipped. The second style is episodic, where each household member is asked if they have suffered an illness or injury in the recent past. Similarly, if they answer yes a sequence of questions continues including OOPs. The third and least popular is the direct style, where each household member reports their expenses for a list of different health services and items. The direct style is not attached to the utilization of health services, or an episode of illness, every household member has to answer. The consumption module on the other hand is build to measure consumption, each household reports their expenses for a specified list of products, and services without a possibility of skipping questions.
+
+A surprising part of the compilation process was working with the aggregate files of each survey, and notice that there is no common standard on how OOPs are reported. Aggregate files are created to calculate welfare and poverty rates, and there are opinions that as households recieve little utility from OOPs these should not be included into the total consumption used to calculate the poverty rate (CITE DEATON HERE). In practice, the exclusion or inclusion of OOPS into total consumption generates a confusing situation whereby some statistical agencies exclude OOPs altogether from total consumption, while others exclude only inpatient expenses. For example, the 2017 Ghana GLSS survey reports OOPs that do not include hospitalization expenses, but the total consumption estimate does include them. A previous version of the same survey in 2015, also did not include hospitalization expenses in the OOPs, but also excluded them from total consumption. Other issue presented itself in he "Malawi 2004 and 2010 surveys" (not included in our selected sample) which collected regular consumption modules without instruments for OOPs, but in the aggregate file OOPs collected from the health module were added into total consumption, therefore comparing estimates from two different modules.
 
 
 
@@ -64,32 +69,50 @@ df_bothm <- df %>% # df with surveys from both modules
 # keep only observations from selected surveys - nontidy
 df_bothm_nontidy <- df_nontidy %>% 
   inner_join(surveys_bothmodules)
+
+# What are the surveys without hhweights? -- both modules
+surveys_nohhweight <- df_bothm_nontidy  %>% select(hhid_compilation, survey, hhweight) %>% 
+  mutate(weight_missing = is.na(hhweight)) %>% 
+  group_by(survey) %>% 
+  summarise(per_missing = mean(weight_missing, na.rm = TRUE))
+
+# What are the surveys without hhweights? -- all
+surveys_nohhweight_all <- df_nontidy  %>% select(hhid_compilation, survey, hhweight) %>% 
+  mutate(weight_missing = is.na(hhweight)) %>% 
+  group_by(survey) %>% 
+  summarise(per_missing = mean(weight_missing, na.rm = TRUE))
+
+# Create DF with "fake" weights for surveys without them
+df_bothm_nontidy_weightcorrected <- df_bothm_nontidy %>% 
+  left_join(surveys_nohhweight) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>%  # Give weight 1 to surveys withoyut hhweights 
+  filter(Health>-1,Consumption>-1)  # take NAs out 
+
+df_bothm_tidy_weightcorrected <- df_bothm %>% 
+  left_join(surveys_nohhweight) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>%  # Give weight 1 to surveys withoyut hhweights 
+  filter(oops>-1)  # take NAs out 
+
 ```
 
 
-```{r descriptive_table, echo=FALSE, warning=FALSE, message=FALSE}
+```{r descriptive_table_bothmodules, echo=FALSE, warning=FALSE, message=FALSE}
 
 # Tab1 - grab surveys and names, plus characteristics
-tab1_descriptive <- tab_survey_names %>% select(Survey, survey.name, LSMS) %>% 
+tab1_descriptive <- tab_survey_names %>% select(survey, survey.name, LSMS) %>% 
   rename(`Survey Name` = survey.name,
-         `LSMS Status` = LSMS,
-         survey = Survey) %>% 
-  inner_join(tab_recall) %>% # Guarantees to have only those that have both modules
+         `LSMS Status` = LSMS) %>% 
+  right_join(surveys_bothmodules) %>% 
+  inner_join(tab_recall) %>% # Get recall and nitems
   pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
   group_by(survey) %>% 
   mutate(`Items Health Module` = first(nitems_Health),
             `Items Consumption Module` = last(nitems_Consumption),
             `Avg. Recall Health Module` = first(recall_Health),
             `Avg. Recall Consumption Module` = round(last(recall_Consumption),1 ) ) %>% 
-  rename(Survey = survey) %>% 
-  select(Survey, `Survey Name`, `LSMS Status`, `Items Health Module`,`Items Consumption Module`, `Avg. Recall Health Module`, `Avg. Recall Consumption Module` ) %>% 
+  select(survey, `Survey Name`, `LSMS Status`, `Items Health Module`,`Items Consumption Module`, `Avg. Recall Health Module`, `Avg. Recall Consumption Module` ) %>% 
   distinct()
 
-# What are the surveys without hhweights?
-surveys_nohhweight <- df_bothm_nontidy  %>% select(hhid_compilation, survey, hhweight) %>% 
-  mutate(weight_missing = is.na(hhweight)) %>% 
-  group_by(survey) %>% 
-  summarise(per_missing = mean(weight_missing, na.rm = TRUE))
 
 
 # Grab number of observations per survey and means
@@ -112,12 +135,16 @@ obs <- obs %>%
     `Mean Non-Health Consumption` = ifelse(per_missing==1, str_c(as.character(`Mean Non-Health Consumption`),"*"),`Mean Non-Health Consumption`  ),
     `Mean OOPs Health Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Health Module`),"*"),`Mean OOPs Health Module`  ),
     `Mean OOPs Consumption Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Consumption Module`),"*"),`Mean OOPs Consumption Module`  )
-  )
+  ) %>% 
+  rename(survey = Survey)
+
 
 # Put observations in
 tab1_descriptive <- tab1_descriptive %>% 
   left_join(obs) %>% 
-  select(-per_missing)
+  select(-per_missing) %>% 
+  rename(Survey = survey)
+
 
 # Table
 kable(tab1_descriptive) %>% 
@@ -130,22 +157,107 @@ footnote(general = "Consumption averages are expressed in 2011 USD PPP. The surv
 
 ```
 
+```{r descriptive_table_healthmodule_only, echo=FALSE, warning=FALSE, message=FALSE}
 
-```{r tree_healthmodule, echo=FALSE, fig.cap="A caption", out.width = '100%'}
-knitr::include_graphics("tree_healthmodule.png")
+# Tab2 - grab surveys and names, plus characteristics
+tab2_descriptive <- tab_survey_names %>% select(survey, survey.name, LSMS) %>% 
+  rename(`Survey Name` = survey.name,
+         `LSMS Status` = LSMS) %>% 
+  inner_join(tab_recall) %>%  # Get recall and nitems
+  filter(module== "Health" ) %>% # for this part only use health module
+  pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
+  group_by(survey) %>% 
+  mutate(`Items Health Module` = first(nitems_Health),
+            `Avg. Recall Health Module` = first(recall_Health)) %>% 
+  select(survey, `Survey Name`, `LSMS Status`, `Items Health Module`, `Avg. Recall Health Module`) %>% 
+  distinct()
+
+
+# Add information about styles
+long_descriptive2 <- style_info %>% 
+  rename(survey = Survey) %>% 
+  left_join(tab2_descriptive) %>% 
+  group_by(survey,Classification) %>% 
+  mutate(n_style = n()) %>% 
+  ungroup() %>% 
+  group_by(survey) %>% 
+  add_tally() %>% 
+  ungroup() %>% 
+  mutate( percent =  (n_style / n) *100  ) %>% 
+  select(survey,`Survey Name`,Classification,`Items Health Module`,`Avg. Recall Health Module`,percent) %>% 
+  distinct()
+
+
+# Wide table
+table_descriptive2_wide <- long_descriptive2 %>% 
+  pivot_wider(names_from = Classification, values_from = percent, names_prefix = "Percent_") %>% 
+  mutate_at(c("Percent_episodic","Percent_hosp","Percent_direct","Percent_utilization","Percent_trad"),funs(replace_na(.,0))) %>% 
+  mutate_at(c("Percent_episodic","Percent_hosp","Percent_direct","Percent_utilization","Percent_trad"),funs(round(.,1)))
+
+
+# Almost ready include average OOPs
+# Grab number of observations per survey and means
+obs2 <- df_nontidy %>%
+   left_join(surveys_nohhweight_all) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>% # Give weight 1 to surveys withoyut hhweights
+  select(hhid_compilation, Health, survey, nonhealth_consumption, hhweight) %>% 
+  filter(Health>-1) %>%  # take NAs out 
+  group_by(survey) %>% 
+  summarise(Observations = n(),
+            `Mean Non-Health Consumption` = round( weighted.mean(nonhealth_consumption,hhweight, na.rm = TRUE),1),
+            `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1)) %>% 
+  left_join(surveys_nohhweight_all) %>%  # include again per_missing for formatting
+  rename(Survey = survey)
+
+# Put asterisk on numbers from surveys without hhweights
+obs2 <- obs2 %>% 
+  mutate(
+    `Mean Non-Health Consumption` = ifelse(per_missing==1, str_c(as.character(`Mean Non-Health Consumption`),"*"),`Mean Non-Health Consumption`  ),
+    `Mean OOPs Health Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Health Module`),"*"),`Mean OOPs Health Module`  )) %>% 
+  rename(survey = Survey)
+
+
+
+# Put observations in
+tab2_descriptive <- table_descriptive2_wide %>% 
+  left_join(obs2) %>% 
+  select(-per_missing)
+
+# Table
+kable(tab2_descriptive) %>% 
+    kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+footnote(general = "Consumption averages are expressed in 2011 USD PPP. The surveys of Ghana_2006 through Ghana_2017 do not belong to the LSMS program, but they continue the work of previous LSMS surveys in Ghana.
+         * sampling weights were not available for calculation")
+  
+
 ```
 
 
 
 
+```{r tree_healthmodule, echo=FALSE, fig.cap="Figure 1: OOP collection styles", out.width = '100%'}
+knitr::include_graphics("tree_healthmodule.png")
+```
 
 
-# Household OOPs
+# Survey instruments to measure OOPs
 
-With two different OOP estimates for each household for `r length(surveys_bothmodules$survey)` surveys, there is an opportunity to explore how much the reported OOPs differ by the module in the same household. Figure 1 exhibits a heatmap for each survey. OOPs in the health module are on the y-axis, while OOPs in the consumption module are on the x-axis. The color of the hexagons represents the concentration of observations around the area, with more intense tones representing a higher concentration.
+Across the 16 surveys the specific instruments to measure OOPs were very different within surveys between the health and consumption module, and between surveys. The variations were not only a function of the chosen recall periods and length of the questionnaire, but also about which categories of health expenditure were included and excluded. Table 2 exhibits the health expenditure categories covered by each survey/module combination based on the COICOP 2018 standard. The COICOP 2018 standard is an expenditure classification system developed by the UNDP to harmonize the reporting of national accounts between countries.
+
+Examining Table 2 it is apparent that no survey/module pair covers all the health expenditure subcategories included in the COICOP standard. The most covered category is medicines, vaccines and other pharmaceutical preparations driven by instruments dedicated to the purchase of prescripbed medicines (in health modules), and medicine in general (in the consumption module). The outpatient long-term care and inpatient long-term care sub-categories were not part of any survey. These categories are dedicated to rehabilitation and prevent deterioration of a condition in the oupatient case, and convalesent homes or hospitals, or nursing care facilities for the inpatient case.
+
+```{r COICOPS_table, echo=FALSE, fig.cap="Table 2: COICOPS classification of healthcare expenditures", out.width = '100%'}
+knitr::include_graphics("COICOP_Table.png")
+```
 
 
-It is interesting to see that some surveys do a very good job at eliciting similar OOPs between modules, such as the surveys from Uganda, and Bulgaria. On the other hand, all other surveys have a clear pattern of higher OOPs in the health module, with the exception of Ghana 2017.
+
+
+# Household OOPs in the health and consumption module
+
+The `r length(surveys_bothmodules$survey)` surveys in our sample have two OOP estimates for each household from the health and consumption module. The availability of such data makes it possible to compare how similar the two estimates are on each survey. In Figure 2 a heatmap is exhibited for each survey, where OOPs in the health module are on the y-axis, and OOPs in the consumption module are on the x-axis. The color of the hexagons represents the concentration of observations around the area, with more intense tones representing a higher concentration. Each panel also includes a dashed 45-degree line, where the values of the OOPs in the health module and consumption module are equal. A concentration of observations above (below) the dashed line represents higher (lower) reporting in the health module than the consumption module.
+
+A pattern of higher OOPs in the health module is observed in Figure 2, with the exception of Ghana 2017. Other insight is that some surveys do a very good job at eliciting similar OOPs between modules, such as the surveys from Uganda, and Bulgaria, where a major group of observations are concentrated around the 45-degree line.
 
 ```{r heatmap_health_consumption, echo=FALSE, warning=FALSE, message=FALSE}
 
@@ -226,11 +338,11 @@ grid.arrange(hex_graphs[[1]],hex_graphs[[2]],hex_graphs[[3]],hex_graphs[[4]],
 ```
 
 
-```{r scatter_health_consumption, warning=FALSE, echo=FALSE, message=FALSE}
+```{r scatter_health_consumption, eval=FALSE, warning=FALSE, echo=FALSE, message=FALSE}
 
 # prepare data: filter z-score <3
-df_scatter <- df_bothm_tidy_weightcorrected %>% 
-    select(hhid_compilation,survey,module,oops, hhweight) %>% 
+df_scatter <- df_bothm %>% 
+    select(hhid_compilation,survey,module,oops) %>% 
   group_by(survey,module) %>% 
   filter(  (oops - mean(oops,na.rm = TRUE))/sd(oops,na.rm = TRUE)<3  ) %>%  # z-score less than 3 for viz purposes  
 pivot_wider(id_cols = c(hhid_compilation,survey), names_from = module, values_from = oops)
@@ -278,59 +390,302 @@ grid.arrange(scatter_graphlist[[1]],scatter_graphlist[[2]],scatter_graphlist[[3]
 
 
 
-Table 1 exhibits the instrument characteristics of each survey, sorting them by their regression coefficient. The coefficient was obtained by regressing the OOPs in the health module as the dependent variable, and the OOPs in the consumption module as the independent variable. A coefficient of one represents that the two modules are measuring the same underlying variable, but with some statistical noise involved. Coefficients straying away from one, on the other hand, relate to a mismatch in measuring between modules.
+```{r Boxplot_health_consumption, echo=FALSE, eval=FALSE}
 
-All surveys that have coefficients close to 1 have equal average recall periods in their consumption and health modules—pointing to the importance of using the same recall periods in order to have comparable OOPs between modules.
+# Just for me to check averages
 
+?geom_boxplot
 
-```{r simple_model_OOPs, echo=FALSE, warning=FALSE, message=FALSE}
-
-# Create simple regression
-survey_model <- function(survey_name){
-  df_aux <- df_bothm_nontidy %>% filter(survey==survey_name)
-  model <- lm(Health ~ Consumption , data = df_aux)
-  coef(model)[[2]]
-}
-
-
-coefs <- bothm_surveylist %>% map(survey_model) %>% unlist()
-
-tab_reg <- tibble(coef = coefs, survey = bothm_surveylist) %>%
-  inner_join(tab_recall) %>% pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
-  group_by(survey) %>% 
-  transmute(
-            `Regression Coefficient` = round(coef,2),
-            `Items Health Module` = first(nitems_Health),
-            `Items Consumption Module` = last(nitems_Consumption),
-            `Avg. Recall Health Module` = first(recall_Health),
-            `Avg. Recall Consumption Module` = round(last(recall_Consumption),1 ) ) %>% 
-  rename(Survey = survey) %>% 
-  distinct() %>% 
-  arrange(`Regression Coefficient`)
-
-
-kable(tab_reg) %>% 
-  kable_styling(bootstrap_options = c("striped", "hover")) %>% 
-   footnote(general = "The number of items correspond to the number of instruments utilized in the survey to arrive at the OOPs estimate in each module. The average recall period is in weeks, and represents how far back in time households were asked to recall their expenditures")
+df_bothm %>%
+  group_by(survey,module) %>% 
+  summarise(
+    mean = mean(oops, na.rm=TRUE),
+    median = quantile(oops , probs = 0.5, na.rm = TRUE),
+    p25 = quantile(oops , probs = 0.25, na.rm = TRUE),
+    p75 = quantile(oops , probs = 0.75, na.rm = TRUE)
+  ) %>% 
+  ggplot(aes(module)) +
+  geom_point(aes(module,p25), color="blue") +
+  geom_point(aes(module,median), color="red") +
+  geom_point(aes(module,p75), color="green") +
+  facet_wrap(~survey, scales = "free")
   
+
+
 ```
+
+
+## Regression Analysis
+
+Table 2 exhibits the results of linear regression models where we use OOPs in the health module as dependent variable, and OOPs in the consumption module as dependent variable. All models include survey fixed effects.
+
+The results of the simple model exhibits higher OOPS for the health module than consumption module. Households with zero OOPs in the consumption module are expected to report OOPs of USD 99.39 (at 2011 PPP prices) as evidenced by the intercept. Also, a USD 1 increase in OOPs in the consumption module implies a USD 0.70 increase in OOPs in the health module, this result remains the same in all model specifications.
+
+The second model includes the a dummy variable for urban households, and household size as independent variables. Each additional household member adds USD 22.80 to the reported OOPs in the health module, even after controlling for the declared OOPs in the consumption module. This effect can be interpreted as the result of the individual aggregation of health module, where OOPs have to be reported for each member and are then added. The consumption module on the other hand asks for the OOPs of the household. Urban households report USD 81.46 more in the health module than their rural counterparts. This might be explained by the episodic nature of the health module, where to report an injury or illness, or utilization of some health service needs to have occurred. Urban households have better access to health services, which might explain the positive coefficient.
+
+
+
+
+```{r regressions_OOPs, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Variables by survey (50%+ have it) -- for me to check and include
+tab_var_present <- df_bothm_nontidy_weightcorrected %>% 
+  pivot_longer(c(Health,Consumption,urban,hhsize,hhead_female,hhead_married,hhead_age),names_to = "var",values_to = "value") %>% 
+  mutate(present  = !is.na(value)) %>% 
+  group_by(survey,var) %>% 
+  summarise(per_present = mean(present, na.rm = TRUE)) %>% 
+  pivot_wider(id_cols = c(survey,var), names_from = var, values_from = per_present)
+
+# Simple model (OOPs and country FE)
+model_1 <- df_bothm_nontidy_weightcorrected %>% 
+  filter(survey!="Bulgaria_2007") %$%
+  lm(Health ~ Consumption + factor(survey))
+
+# Include household characteristics (size and urbanicity)
+model_2 <- df_bothm_nontidy_weightcorrected %>% 
+  filter(survey!="Bulgaria_2007") %$%
+  lm(Health ~ Consumption + urban + hhsize + factor(survey))
+
+# Include hhead info
+model_3 <- df_bothm_nontidy_weightcorrected %>% 
+  filter(survey!="Bulgaria_2007") %$%  
+  lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+
+# Include hospitalization
+model_4 <- df_bothm_nontidy_weightcorrected %>% 
+  filter(survey!="Bulgaria_2007") %$%  
+  lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + factor(survey))
+
+
+
+tab_model(model_1, model_2, model_3, model_4,
+          robust = TRUE,
+          p.style = "asterisk",
+          title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module",
+          terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_femaleTRUE","hhead_marriedTRUE","hhead_age", "episodic_hospTRUE") ,
+          dv.labels = c("Simple Model", "With household characteristics" , "With household head characteristics","With hospitalization"),
+          pred.labels = c("Intecept","OOPs consumption module","Urban","Household size","Female head","Married head","Age head", "Hospitalization in household") )
+
+```
+
+```{r regression_noFE, echo=FALSE, warning=FALSE, message=FALSE}
+
+tab_recall_reg <- tab_recall %>% 
+  pivot_wider(id_cols = c(survey,module), names_from = module, values_from = c(recall,nitems)) %>% 
+  mutate(diff_nitems = nitems_Health - nitems_Consumption,
+         diff_recall = recall_Health - recall_Consumption) %>% 
+    right_join(surveys_bothmodules)
+
+df_reg2 <- df_bothm_nontidy_weightcorrected %>% 
+  left_join(tab_recall_reg)
+
+# Simple model (OOPs and nitems and recall)
+model_21 <- df_reg2 %>% 
+  filter(survey!="Bulgaria_2007") %$%
+  lm(Health ~ Consumption + diff_nitems + diff_recall )
+
+# Include household characteristics (size and urbanicity)
+model_22 <- df_reg2 %>% 
+  filter(survey!="Bulgaria_2007") %$%
+  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize )
+
+
+# Include hhead info
+model_23 <- df_reg2 %>% 
+  filter(survey!="Bulgaria_2007") %$%  
+  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age )
+
+
+# Include hospitalization
+model_24 <- df_reg2 %>% 
+  filter(survey!="Bulgaria_2007") %$%  
+  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp )
+
+
+tab_model(model_21, model_22, model_23, model_24,
+          robust = TRUE,
+          p.style = "asterisk",
+          title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module (No Fixed Effects)",
+          terms = c("(Intercept)","Consumption", "diff_nitems", "diff_recall", "urbanTRUE","hhsize","hhead_femaleTRUE","hhead_marriedTRUE","hhead_age","episodic_hospTRUE"),
+          dv.labels = c("Simple Model", "With household characteristics" , "With household head characteristics", "With hosp"),
+          pred.labels = c("Intecept","OOPs consumption module","Diff N.Items","Diff Recall (weeks)","Urban","Household size","Female head","Married head","Age head","Hospitalization in household") )
+
+
+```
+
+```{r regressions_OOPs_Positive, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Filter positive OOPs in Health Module
+df_reg_Hpositive <- df_bothm_nontidy_weightcorrected %>% 
+    filter(survey!="Bulgaria_2007") %>% 
+  filter(Health>0)
+
+# Filter those declaring positive OOPs in Consumption Module
+df_reg_Cpositive <- df_bothm_nontidy_weightcorrected %>% 
+    filter(survey!="Bulgaria_2007") %>% 
+  filter(Consumption>0)
+
+
+#---------------------------------------------------------------------------------------------------------------------#
+  # Simple model (OOPs and country FE)
+  model_31 <- df_reg_Hpositive %$%
+    lm(Health ~ Consumption + factor(survey))
+  
+  # Include household characteristics (size and urbanicity)
+  model_32 <- df_reg_Hpositive %$%
+    lm(Health ~ Consumption + urban + hhsize + factor(survey))
+  
+  # Include hhead info
+  model_33 <- df_reg_Hpositive %$%  
+    lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+  
+  # Include hospitalization
+  model_34 <- df_reg_Hpositive %$%  
+    lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + factor(survey))
+
+#---------------------------------------------------------------------------------------------------------------------#
+  
+  # Simple model (OOPs and country FE)
+model_41 <- df_reg_Cpositive %$%
+  lm(Health ~ Consumption + factor(survey))
+
+# Include household characteristics (size and urbanicity)
+model_42 <- df_reg_Cpositive%$%
+  lm(Health ~ Consumption + urban + hhsize + factor(survey))
+
+# Include hhead info
+model_43 <- df_reg_Cpositive %$%  
+  lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+
+# Include hospitalization
+model_44 <- df_reg_Cpositive %$%  
+  lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + factor(survey))
+
+#---------------------------------------------------------------------------------------------------------------------#
+
+
+tab_model(model_31, model_32, model_33, model_34,model_41, model_42, model_43, model_44,
+          robust = TRUE,
+          p.style = "asterisk",
+          title = "Regression Models: Subset- Positive OOPs in Health Module and Consumption Module",
+          terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_femaleTRUE","hhead_marriedTRUE","hhead_age", "episodic_hospTRUE") ,
+          dv.labels = c("H>0:Simple Model", "H>0:With household characteristics" , "H>0:With household head characteristics","H>0:With hospitalization",
+                        "C>0:Simple Model", "C>0:With household characteristics" , "C>0:With household head characteristics","C>0:With hospitalization"),
+          pred.labels = c("Intecept","OOPs consumption module","Urban","Household size","Female head","Married head","Age head", "Hospitalization in household") )
+
+```
+
+```{r regression_noFE_Positive, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Filter Positive Health OOPs
+df_reg5_h <- df_reg2 %>% 
+  filter(survey!="Bulgaria_2007") %>% 
+  filter(Health>0)
+  
+# Filter Positive Consumption OOPs
+df_reg5_c <- df_reg2 %>% 
+  filter(survey!="Bulgaria_2007") %>% 
+  filter(Consumption>0)
+  
+
+#---------------------------------------------------------------------------------------------------------------------#
+  # Simple model (OOPs and country FE)
+  model_51 <- df_reg5_h %$%
+  lm(Health ~ Consumption + diff_nitems + diff_recall )
+  
+  # Include household characteristics (size and urbanicity)
+  model_52 <- df_reg5_h %$%
+    lm(Health ~ Consumption + diff_nitems + diff_recall+ urban + hhsize )
+  
+  # Include hhead info
+  model_53 <- df_reg5_h %$%  
+    lm(Health ~ Consumption+ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age )
+  
+  # Include hospitalization
+  model_54 <- df_reg5_h %$%  
+    lm(Health ~ Consumption + diff_nitems + diff_recall+ urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp )
+
+#---------------------------------------------------------------------------------------------------------------------#
+  
+  # Simple model (OOPs and country FE)
+model_61 <- df_reg5_c %$%
+  lm(Health ~ Consumption + diff_nitems + diff_recall )
+
+# Include household characteristics (size and urbanicity)
+model_62 <- df_reg5_c%$%
+  lm(Health ~ Consumption + diff_nitems + diff_recall+ urban + hhsize )
+
+# Include hhead info
+model_63 <- df_reg5_c %$%  
+  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age )
+
+# Include hospitalization
+model_64 <- df_reg5_c %$%  
+  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp)
+
+#---------------------------------------------------------------------------------------------------------------------#
+
+tab_model(model_51, model_52, model_53, model_54,model_61, model_62, model_63, model_64,
+          robust = TRUE,
+          p.style = "asterisk",
+          title = "Regression Models: Positive OOPs in Health Module and Consumption Module",
+          terms = c("(Intercept)","Consumption", "diff_nitems", "diff_recall", "urbanTRUE","hhsize","hhead_femaleTRUE","hhead_marriedTRUE","hhead_age","episodic_hospTRUE"),
+          dv.labels = c("H>0:Simple Model", "H>0:With household characteristics" , "H>0:With household head characteristics", "H>0:With hosp",
+                        "C>0:Simple Model", "C>0:With household characteristics" , "C>0:With household head characteristics", "C>0:With hosp"),
+          pred.labels = c("Intecept","OOPs consumption module","Diff N.Items","Diff Recall (weeks)","Urban","Household size","Female head","Married head","Age head","Hospitalization in household") )
+
+
+```
+
+# Models for styles
+```{r models_style, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE }
+
+# DF with data and style characteristics
+df_styles <- df_nontidy %>% left_join(table_descriptive2_wide)
+df_styles <- df_styles %>% 
+  mutate_at(c("Percent_episodic","Percent_hosp","Percent_direct","Percent_utilization","Percent_trad"),funs(replace_na(.,0)))
+
+df_styles %>% 
+  select(survey,Percent_direct,Percent_episodic,Percent_hosp,Percent_trad,Percent_utilization) %>% 
+  distinct()
+
+
+# Run model - effect of styles: only styles
+model_71 <- df_styles %$%  
+  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad)
+
+
+# Model 2 include n-items and recall period
+model_72 <- df_styles %$%  
+  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad + `Items Health Module` + `Avg. Recall Health Module`)
+
+
+# Model 3 include household characteristics
+model_73 <- df_styles %$%  
+  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad + `Items Health Module` + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age)
+
+# Model 4 include hospitalization
+model_74 <- df_styles %$%  
+  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad + `Items Health Module` + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age + episodic_hosp)
+
+
+
+tab_model(model_71, model_72, model_73, model_74,
+          robust = TRUE,
+          p.style = "asterisk")
+
+
+
+```
+
+
+
 
 
 
 # Average OOPs
 
 ```{r get_means , include=FALSE, warning=FALSE, message=FALSE}
-
-# Create DF with "fake" weights for surveys without them
-df_bothm_nontidy_weightcorrected <- df_bothm_nontidy %>% 
-  left_join(surveys_nohhweight) %>% 
-  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>%  # Give weight 1 to surveys withoyut hhweights 
-  filter(Health>-1,Consumption>-1)  # take NAs out 
-
-df_bothm_tidy_weightcorrected <- df_bothm %>% 
-  left_join(surveys_nohhweight) %>% 
-  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>%  # Give weight 1 to surveys withoyut hhweights 
-  filter(oops>-1)  # take NAs out 
 
 # Grab means by survey and module - and order surveys
 tab_mean_oops <- df_bothm_nontidy_weightcorrected %>% 
@@ -605,20 +960,21 @@ tab_che %>% left_join(latest_wdi %>% select(survey,wdi_che10)) %>%
 
 # Hospitalizations
 
-Until now, the analysis has focused on all households without regard of their health care utilization. In this regard, we should expect households who have utilized health care more to have higher OOPs, but there is no clarity on whether the health or consumption module is better at capturing OOPs for households with high utilization of health care. For 11 out of the 17 surveys in our sample, we have information on whether any household member has declared to be hospitalized.
+Until now, the analysis has focused on all households without regard of their health care utilization.It is expected that households who have used health services to have higher OOPs, but there is no clarity on whether the health or consumption module is better at capturing these. For 11 out of the 17 surveys in our sample, we have information on whether any household member has declared to be hospitalized, which will we consider as households with hospitalizations through this section.
 
- be to check how both modules capture the OOPs of households that we know had pressing health issues, and had to spend on health care. For ... surveys we have information on hospitalizations. We will consider that a household had an hospitalization if any household member declared to be hospitalized in the survey. We will replicate Figure 1 exhibiting the mean OOPs of the health module over the consumption module, but now splitting the samples on each survey, depending on whether the household has an hospitalization or not.
+Figure ... exhibits the ratio of the mean OOPs for hospitalized households divided by that of non-hospitalized households. We can check that for every survey and module the ratio is larger than one, meaning that hospitalized households have average higher OOPs as was expected. In 10 out of 11 surveys the ratio was higher in the health module, meaning that the differences in OOPs between hospitalized and non-hospitalized households are higher in those surveys. The opposite occured only in the Nigeria_2016 survey where the ratio was higher in the consumption module.
 
 
-```{r scatter_plot_hosp}
+```{r scatter_plot_hosp, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
 
 # prepare data: filter z-score <3
 df_scatter_hosp <- df_bothm_tidy_weightcorrected %>% 
     select(hhid_compilation,survey,module,oops,episodic_hosp, hhweight) %>% 
     filter(!is.na(episodic_hosp)) %>% 
   group_by(survey,module) %>% 
-  filter(  (oops - mean(oops,na.rm = TRUE))/sd(oops,na.rm = TRUE)<3  ) %>%  # z-score less than 3 for viz purposes  
-pivot_wider(id_cols = c(hhid_compilation,survey,module,episodic_hosp), names_from = module, values_from = oops)
+  filter(  (oops - mean(oops,na.rm = TRUE))/sd(oops,na.rm = TRUE)<3  ) %>% # z-score less than 3 for viz purposes  
+  pivot_wider(id_cols = c(hhid_compilation,survey,module,episodic_hosp), names_from = module, values_from = oops)
+
 
 # Function for square-scatterplot
 square_scatterplot <- function(survey_name){
@@ -627,7 +983,7 @@ square_scatterplot <- function(survey_name){
     filter(survey==survey_name)
   
   max_scale <- df_plot %$% 
-    max(max(Consumption, na.rm = TRUE), max(Health, na.rm = TRUE), na.rm = TRUE)
+    max( max(Consumption, na.rm = TRUE), max(Health, na.rm = TRUE), na.rm = TRUE)
 
   df_scatter_hosp %>% 
     ggplot(aes(Consumption,Health, alpha=episodic_hosp, size=episodic_hosp) ) +
@@ -647,8 +1003,10 @@ square_scatterplot <- function(survey_name){
 
 }
 
+
 # List of survey
 scatter_surveylist <- df_scatter_hosp %>% select(survey) %>% distinct()
+
 
 # Map the function over list
 scatter_graphlist <- map(scatter_surveylist$survey,square_scatterplot)
@@ -684,12 +1042,22 @@ tab_mean_hosp %>%
   ggplot(aes(survey,Ratio)) +
   geom_point(aes(color=module)) +
   geom_hline(yintercept=1, alpha=3, linetype = "dashed") +
-  coord_flip()
-
+  coord_flip() +
+  ggtitle("Mean OOPs for households with hospitalizations") +
+  labs(caption = "The ratio of this graph consists on the average OOPs for hospitalized households divided by the mean OOPs of non-hospitalized households")
 ```
 
-```{r zero_oops_hosp, echo=FALSE, warning=FALSE, message=FALSE, echo=FALSE}
+Another important criteria is to check the concordance between the OOPs reported in the health module and consumption module for hospitalized households. A priori, we should expect a very small number of households reporting zero OOPs on either module, given that we know a households member had a delicate condition at least during the last year. 
 
+Table .... reports the concordance rate for hospitalized households. The third column represents the percentage of households who declared zero and positive OOPs in the health and consumption module respectively, no value in this column exceeds 10%, and in some cases is 0%. On the other hand, the fourth column where OOPs are zero in the consumption module, and positive in the health module the displayed percentages are high. In the case of Ghana_2017 59.6% of hospitalized households reported zero OOPs in the consumption module, which appears as very high. In other 4 cases the percentages are in the twenties, also a high value for households who we know used health services in the past.
+
+Surprisingly, the non-concordance rate between OOPs for hospitalized households does not seem to be related to the recall period used for hospitalizations. The highes non-concordance rate was in Ghana_2017 which had the shortest recall period at 2 weeks. The series of surveys in Nigeria had recall period of 52 weeks and also had high levels of non-condordance, while other surveys with shorter recall periods had low non-concordance rates.
+
+
+
+```{r concordance_zero_oops_hosp, echo=FALSE, warning=FALSE, message=FALSE, echo=FALSE}
+
+# Percentage with zero OOPs per survey, module
 per_zero_survey <- df_bothm %>% 
   filter(!is.na(episodic_hosp)) %>%
   mutate(zero_oops = (oops==0)) %>% 
@@ -720,18 +1088,41 @@ per_concordance <- df_bothm %>%
   mutate_at(vars(matches("h")) , percentage) %>% 
   rename(Survey = survey)
   
+# Include recall period for hospitalizations
+tab_hosp_recall <- 
+  tribble(~Survey,~`Recall Period`,
+          "Bulgaria_2003", 52,
+          "Bulgaria_2007", 52,
+          "Ghana_1988", 4,
+          "Ghana_1989", 4,
+          "Ghana_1991",2,
+          "Ghana_2006",2,
+          "Ghana_2013",2,
+          "Ghana_2017",2,
+          "Nigeria_2011",52,
+          "Nigeria_2013",52,
+          "Nigeria_2016",52)
+# Add
+per_concordance2 <- per_concordance %>% left_join(tab_hosp_recall) %>% 
+  select(Survey,`Recall Period`,`Both Zero`,`Both Positive`,`Consumption>0, Health=0`,`Consumption=0, Health>0`,`Non-Concordance Rate`,`Concordance Rate`)
 
-  kable(per_concordance ) %>% 
+# Include percentage and number hospitalized
+tab_per_hosp <- df_bothm_nontidy_weightcorrected %>% 
+  filter(!is.na(episodic_hosp)) %>% 
+  group_by(survey) %>% 
+  summarise(n = n(),
+            `Percentage Hospitalized` = mean(episodic_hosp)) %>% 
+  transmute(Survey = survey,
+          `Number Hospitalized` = n* `Percentage Hospitalized`,
+         `Percentage Hospitalized` = round(`Percentage Hospitalized` * 100,1) )
+
+per_concordance3 <- tab_per_hosp %>% 
+  left_join(per_concordance2)
+
+# Table out
+  kable(per_concordance3 ) %>% 
   kable_styling(bootstrap_options = c("striped", "hover")) %>% 
-    footnote(general = "The columns represent the percentage of hospitalized households (at least one member declared an hospitalization) in each category depending on their reported OOPs in the consumption and health module. The first column is the percentage of households in the survey that reported zero OOPS in both the health module and consumption module. The second column is the percentage of households reporting strictly positive OOPs in the consumption module, and zero OOPs in the health module. ")
-```
-
-
-
-
-
-
-
+    footnote(general = "The columns represent the percentage of hospitalized households (at least one member declared an hospitalization). Recall period in weeks.")
 ```
 
 
