@@ -20,6 +20,9 @@ library(sandwich)
 library(lmtest) # for coeftest() 
 library(sjPlot)
 
+library(cowplot)
+
+
 rm(list=ls())
 
 # Load data
@@ -96,7 +99,96 @@ df_bothm_tidy_weightcorrected <- df_bothm %>%
 ```
 
 
-```{r descriptive_table_bothmodules, echo=FALSE, warning=FALSE, message=FALSE}
+```{r descriptive_table_healthmodule_only, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Tab2 - grab surveys and names, plus characteristics
+tab2_descriptive <- tab_survey_names %>% select(survey, survey.name, LSMS) %>% 
+  rename(`Survey Name` = survey.name,
+         `LSMS Status` = LSMS) %>% 
+  inner_join(tab_recall) %>%  # Get recall and nitems
+  filter(module== "Health" ) %>% # for this part only use health module
+  pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
+  group_by(survey) %>% 
+  mutate(`Items Health Module` = first(nitems_Health),
+            `Avg. Recall Health Module` = first(recall_Health)) %>% 
+  select(survey, `Survey Name`, `LSMS Status`, `Items Health Module`, `Avg. Recall Health Module`) %>% 
+  distinct()
+
+
+# Add information about styles
+long_descriptive2 <- style_info %>% 
+  rename(survey = Survey) %>% 
+  left_join(tab2_descriptive) %>% 
+  mutate(Classification = case_when(Classification=='hosp' ~ 'utilization',
+         Classification=='trad' ~ 'utilization',
+         !Classification %in% c('hosp','trad') ~ Classification )) %>% 
+  group_by(survey,Classification) %>% 
+  mutate(n_style = n()) %>% 
+  select(-Question,-question_number,-Classification2) %>% 
+  distinct()
+  #ungroup() %>% 
+  #group_by(survey) %>% 
+  #add_tally() %>% 
+  #ungroup() %>% 
+  #mutate( percent =  (n_style / n) *100  ) %>% 
+  #select(survey,`Survey Name`,Classification,`Items Health Module`,`Avg. Recall Health Module`,percent) %>% 
+  #distinct()
+
+
+# Wide table
+table_descriptive2_wide <- long_descriptive2 %>% 
+  pivot_wider(names_from = Classification, values_from = n_style, names_prefix = "n_") %>% 
+  mutate_at(c("n_episodic","n_direct","n_utilization"),funs(replace_na(.,0))) %>% 
+  mutate_at(c("n_episodic","n_direct","n_utilization"),funs(round(.,1)))
+
+
+# Almost ready include average OOPs
+# Grab number of observations per survey and means
+obs2 <- df_nontidy %>%
+   left_join(surveys_nohhweight_all) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>% # Give weight 1 to surveys withoyut hhweights
+  select(hhid_compilation, Health, survey, nonhealth_consumption, hhweight) %>% 
+  filter(Health>-1) %>%  # take NAs out 
+  group_by(survey) %>% 
+  summarise(Observations = n(),
+            `Mean Non-Health Consumption` = round( weighted.mean(nonhealth_consumption,hhweight, na.rm = TRUE),1),
+            `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1)) %>% 
+  left_join(surveys_nohhweight_all) %>%  # include again per_missing for formatting
+  rename(Survey = survey)
+
+# Put asterisk on numbers from surveys without hhweights
+obs2 <- obs2 %>% 
+    mutate(`Percent OOPs Health Module` = round( (`Mean OOPs Health Module`/`Mean Non-Health Consumption`)*100,2) ) %>% 
+  mutate(`Mean Non-Health Consumption` = ifelse(per_missing==1, str_c(as.character(`Mean Non-Health Consumption`),"*"),`Mean Non-Health Consumption`  ),
+    `Mean OOPs Health Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Health Module`),"*"),`Mean OOPs Health Module`  ),
+    `Percent OOPs Health Module` = ifelse(per_missing==1, str_c(as.character(`Percent OOPs Health Module`),"*"),`Percent OOPs Health Module` )) %>% 
+  rename(survey = Survey)
+
+# Put observations in
+tab2_descriptive <- table_descriptive2_wide %>% 
+  left_join(obs2) %>% 
+  select(-per_missing) %>% 
+  filter(survey!='Albania_2008') %>%  # check what happened with albania 2008
+  mutate(`Items Health Module` = n_episodic + n_utilization + n_direct) # Fix number of health items
+
+# Export to excel
+tab2_descriptive_export <- tab2_descriptive %>% 
+  arrange(survey)
+
+write.csv(tab2_descriptive_export,'tab_onlyhealthmodule.csv')
+
+
+# Table
+kable(tab2_descriptive) %>% 
+    kable_styling(bootstrap_options = c("striped", "hover")) %>% 
+footnote(general = "Consumption averages are expressed in 2011 USD PPP. The surveys of Ghana_2006 through Ghana_2017 do not belong to the LSMS program, but they continue the work of previous LSMS surveys in Ghana.
+         * sampling weights were not available for calculation")
+
+```
+
+
+
+```{r descriptive_table_bothmodules, echo=FALSE, message=FALSE, warning=FALSE}
 
 # Tab1 - grab surveys and names, plus characteristics
 tab1_descriptive <- tab_survey_names %>% select(survey, survey.name, LSMS) %>% 
@@ -126,6 +218,8 @@ obs <- df_bothm_nontidy %>%
             `Mean Non-Health Consumption` = round( weighted.mean(nonhealth_consumption,hhweight, na.rm = TRUE),1),
             `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1),
             `Mean OOPs Consumption Module`  = round( weighted.mean(Consumption,hhweight, na.rm = TRUE),1)) %>% 
+  ungroup() %>% 
+  mutate(`Percent HOOPs/COOPs` = round(`Mean OOPs Health Module`/`Mean OOPs Consumption Module`,2) ) %>% 
   left_join(surveys_nohhweight) %>%  # include again per_missing for formatting
   rename(Survey = survey)
 
@@ -134,17 +228,28 @@ obs <- obs %>%
   mutate(
     `Mean Non-Health Consumption` = ifelse(per_missing==1, str_c(as.character(`Mean Non-Health Consumption`),"*"),`Mean Non-Health Consumption`  ),
     `Mean OOPs Health Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Health Module`),"*"),`Mean OOPs Health Module`  ),
-    `Mean OOPs Consumption Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Consumption Module`),"*"),`Mean OOPs Consumption Module`  )
-  ) %>% 
+    `Mean OOPs Consumption Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Consumption Module`),"*"),`Mean OOPs Consumption Module`),
+    `Percent HOOPs/COOPs` = ifelse(per_missing==1, str_c(as.character(`Percent HOOPs/COOPs`),"*"),`Percent HOOPs/COOPs`
+  ) ) %>% 
   rename(survey = Survey)
 
+
+# Number of items in health module
+nitems_health <- tab2_descriptive_export %>% 
+  select(survey,`Items Health Module`)
 
 # Put observations in
 tab1_descriptive <- tab1_descriptive %>% 
   left_join(obs) %>% 
   select(-per_missing) %>% 
-  rename(Survey = survey)
+  left_join(nitems_health, by = "survey") %>% 
+  mutate(`Items Health Module` = `Items Health Module.y`) %>% 
+  select(-`Items Health Module.x`,-`Items Health Module.y`)
 
+tab1_descriptive_export <- tab1_descriptive %>% 
+  arrange(survey)
+
+write.csv(tab1_descriptive_export,'tab_bothmodules.csv')
 
 # Table
 kable(tab1_descriptive) %>% 
@@ -154,84 +259,7 @@ footnote(general = "Consumption averages are expressed in 2011 USD PPP. The surv
   
 
 
-
 ```
-
-```{r descriptive_table_healthmodule_only, echo=FALSE, warning=FALSE, message=FALSE}
-
-# Tab2 - grab surveys and names, plus characteristics
-tab2_descriptive <- tab_survey_names %>% select(survey, survey.name, LSMS) %>% 
-  rename(`Survey Name` = survey.name,
-         `LSMS Status` = LSMS) %>% 
-  inner_join(tab_recall) %>%  # Get recall and nitems
-  filter(module== "Health" ) %>% # for this part only use health module
-  pivot_wider(names_from = module, values_from = c(recall,nitems)) %>% 
-  group_by(survey) %>% 
-  mutate(`Items Health Module` = first(nitems_Health),
-            `Avg. Recall Health Module` = first(recall_Health)) %>% 
-  select(survey, `Survey Name`, `LSMS Status`, `Items Health Module`, `Avg. Recall Health Module`) %>% 
-  distinct()
-
-
-# Add information about styles
-long_descriptive2 <- style_info %>% 
-  rename(survey = Survey) %>% 
-  left_join(tab2_descriptive) %>% 
-  group_by(survey,Classification) %>% 
-  mutate(n_style = n()) %>% 
-  ungroup() %>% 
-  group_by(survey) %>% 
-  add_tally() %>% 
-  ungroup() %>% 
-  mutate( percent =  (n_style / n) *100  ) %>% 
-  select(survey,`Survey Name`,Classification,`Items Health Module`,`Avg. Recall Health Module`,percent) %>% 
-  distinct()
-
-
-# Wide table
-table_descriptive2_wide <- long_descriptive2 %>% 
-  pivot_wider(names_from = Classification, values_from = percent, names_prefix = "Percent_") %>% 
-  mutate_at(c("Percent_episodic","Percent_hosp","Percent_direct","Percent_utilization","Percent_trad"),funs(replace_na(.,0))) %>% 
-  mutate_at(c("Percent_episodic","Percent_hosp","Percent_direct","Percent_utilization","Percent_trad"),funs(round(.,1)))
-
-
-# Almost ready include average OOPs
-# Grab number of observations per survey and means
-obs2 <- df_nontidy %>%
-   left_join(surveys_nohhweight_all) %>% 
-  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>% # Give weight 1 to surveys withoyut hhweights
-  select(hhid_compilation, Health, survey, nonhealth_consumption, hhweight) %>% 
-  filter(Health>-1) %>%  # take NAs out 
-  group_by(survey) %>% 
-  summarise(Observations = n(),
-            `Mean Non-Health Consumption` = round( weighted.mean(nonhealth_consumption,hhweight, na.rm = TRUE),1),
-            `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1)) %>% 
-  left_join(surveys_nohhweight_all) %>%  # include again per_missing for formatting
-  rename(Survey = survey)
-
-# Put asterisk on numbers from surveys without hhweights
-obs2 <- obs2 %>% 
-  mutate(
-    `Mean Non-Health Consumption` = ifelse(per_missing==1, str_c(as.character(`Mean Non-Health Consumption`),"*"),`Mean Non-Health Consumption`  ),
-    `Mean OOPs Health Module` = ifelse(per_missing==1, str_c(as.character(`Mean OOPs Health Module`),"*"),`Mean OOPs Health Module`  )) %>% 
-  rename(survey = Survey)
-
-
-
-# Put observations in
-tab2_descriptive <- table_descriptive2_wide %>% 
-  left_join(obs2) %>% 
-  select(-per_missing)
-
-# Table
-kable(tab2_descriptive) %>% 
-    kable_styling(bootstrap_options = c("striped", "hover")) %>% 
-footnote(general = "Consumption averages are expressed in 2011 USD PPP. The surveys of Ghana_2006 through Ghana_2017 do not belong to the LSMS program, but they continue the work of previous LSMS surveys in Ghana.
-         * sampling weights were not available for calculation")
-  
-
-```
-
 
 
 
@@ -287,15 +315,16 @@ nbins <- data %>%
     graph <- data %>% 
       ggplot(aes(`Consumption Module`,`Health Module`)) +
       #geom_point(alpha = 1/10) +
-      geom_hex(bins = 68) +
+      geom_hex(bins = 40) +
       scale_fill_gradient(low = "yellow", high = "red", limits = c(5, 200) , guide = FALSE) + #option to show the
       geom_abline(intercept = 0, slope = 1, alpha=20, linetype = "dashed", color="black") +
       scale_y_continuous(limits = c(0,max_scale)) +
       scale_x_continuous(limits = c(0,max_scale)) +
       ggtitle(survey_name) +
+      #labs(x="",y="") +
       theme(axis.text = element_text(size = 5), 
             axis.title = element_text(size = 5),
-            plot.title = element_text(size = 11, face = "bold", hjust=0.5))
+            plot.title = element_text(size = 7, face = "bold", hjust=0.5))
     
     graph
 
@@ -311,9 +340,10 @@ nbins <- data %>%
     scale_y_continuous(limits = c(0,max_scale)) +
     scale_x_continuous(limits = c(0,max_scale)) +
     ggtitle(survey_name) +
+    #labs(x="",y="") +
     theme(axis.text = element_text(size = 5), 
             axis.title = element_text(size = 5),
-            plot.title = element_text(size = 11, face = "bold", hjust=0.5))
+            plot.title = element_text(size = 7, face = "bold", hjust=0.5))
   
   graph
   }
@@ -329,10 +359,19 @@ hex_graphs <- bothm_surveylist %>%  map(scatter_xy)
 
 
 # Put all graphs in one page
-grid.arrange(hex_graphs[[1]],hex_graphs[[2]],hex_graphs[[3]],hex_graphs[[4]],
+plot_grid(hex_graphs[[1]],hex_graphs[[2]],hex_graphs[[3]],hex_graphs[[4]],
              hex_graphs[[5]],hex_graphs[[6]],hex_graphs[[7]],hex_graphs[[8]],
              hex_graphs[[9]],hex_graphs[[10]],hex_graphs[[11]],hex_graphs[[12]],
-             hex_graphs[[13]],hex_graphs[[14]],hex_graphs[[15]],hex_graphs[[16]], hex_graphs[[17]])
+             hex_graphs[[13]],hex_graphs[[14]],hex_graphs[[15]],hex_graphs[[16]], hex_graphs[[17]],
+             align = "v", ncol = 5, rel_heights = c(1, 1, 1) )
+ggsave2('heatmap.pdf')
+
+# # Export
+#  g <- arrangeGrob(hex_graphs[[1]],hex_graphs[[2]],hex_graphs[[3]],hex_graphs[[4]],
+#              hex_graphs[[5]],hex_graphs[[6]],hex_graphs[[7]],hex_graphs[[8]],
+#              hex_graphs[[9]],hex_graphs[[10]],hex_graphs[[11]],hex_graphs[[12]],
+#              hex_graphs[[13]],hex_graphs[[14]],hex_graphs[[15]],hex_graphs[[16]], hex_graphs[[17]]) #generates g
+#  ggsave(file="heatmap.pdf", g) #saves g
 
 
 ```
@@ -393,9 +432,6 @@ grid.arrange(scatter_graphlist[[1]],scatter_graphlist[[2]],scatter_graphlist[[3]
 ```{r Boxplot_health_consumption, echo=FALSE, eval=FALSE}
 
 # Just for me to check averages
-
-?geom_boxplot
-
 df_bothm %>%
   group_by(survey,module) %>% 
   summarise(
@@ -409,11 +445,8 @@ df_bothm %>%
   geom_point(aes(module,median), color="red") +
   geom_point(aes(module,p75), color="green") +
   facet_wrap(~survey, scales = "free")
-  
-
 
 ```
-
 
 ## Regression Analysis
 
@@ -422,8 +455,6 @@ Table 2 exhibits the results of linear regression models where we use OOPs in th
 The results of the simple model exhibits higher OOPS for the health module than consumption module. Households with zero OOPs in the consumption module are expected to report OOPs of USD 99.39 (at 2011 PPP prices) as evidenced by the intercept. Also, a USD 1 increase in OOPs in the consumption module implies a USD 0.70 increase in OOPs in the health module, this result remains the same in all model specifications.
 
 The second model includes the a dummy variable for urban households, and household size as independent variables. Each additional household member adds USD 22.80 to the reported OOPs in the health module, even after controlling for the declared OOPs in the consumption module. This effect can be interpreted as the result of the individual aggregation of health module, where OOPs have to be reported for each member and are then added. The consumption module on the other hand asks for the OOPs of the household. Urban households report USD 81.46 more in the health module than their rural counterparts. This might be explained by the episodic nature of the health module, where to report an injury or illness, or utilization of some health service needs to have occurred. Urban households have better access to health services, which might explain the positive coefficient.
-
-
 
 
 ```{r regressions_OOPs, echo=FALSE, warning=FALSE, message=FALSE}
@@ -436,37 +467,69 @@ tab_var_present <- df_bothm_nontidy_weightcorrected %>%
   summarise(per_present = mean(present, na.rm = TRUE)) %>% 
   pivot_wider(id_cols = c(survey,var), names_from = var, values_from = per_present)
 
-# Simple model (OOPs and country FE)
-model_1 <- df_bothm_nontidy_weightcorrected %>% 
-  filter(survey!="Bulgaria_2007") %$%
-  lm(Health ~ Consumption + factor(survey))
+df_regressions_bothm <- df_bothm_nontidy_weightcorrected %>% 
+  filter(survey!="Bulgaria_2007") %>% 
+  filter(Health>0,Consumption>0) %>% 
+  mutate(HOOPs_COOPs = Health/Consumption)
 
 # Include household characteristics (size and urbanicity)
-model_2 <- df_bothm_nontidy_weightcorrected %>% 
-  filter(survey!="Bulgaria_2007") %$%
-  lm(Health ~ Consumption + urban + hhsize + factor(survey))
+model_2 <- df_regressions_bothm %$%
+  lm(HOOPs_COOPs ~ urban + hhsize + factor(survey))
 
 # Include hhead info
-model_3 <- df_bothm_nontidy_weightcorrected %>% 
-  filter(survey!="Bulgaria_2007") %$%  
-  lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+model_3 <- df_regressions_bothm %$% 
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
 
 # Include hospitalization
-model_4 <- df_bothm_nontidy_weightcorrected %>% 
-  filter(survey!="Bulgaria_2007") %$%  
-  lm(Health ~ Consumption + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + factor(survey))
+model_4 <- df_regressions_bothm %$% 
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + factor(survey))
 
-
-
-tab_model(model_1, model_2, model_3, model_4,
+tab_model(model_2, model_3, model_4,
           robust = TRUE,
           p.style = "asterisk",
           title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module",
-          terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_femaleTRUE","hhead_marriedTRUE","hhead_age", "episodic_hospTRUE") ,
-          dv.labels = c("Simple Model", "With household characteristics" , "With household head characteristics","With hospitalization"),
+          terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_female","hhead_married","hhead_age", "episodic_hospTRUE") ,
+          dv.labels = c("With household characteristics" , "With household head characteristics","With hospitalization"),
           pred.labels = c("Intecept","OOPs consumption module","Urban","Household size","Female head","Married head","Age head", "Hospitalization in household") )
 
 ```
+
+Same but for final sample HOSP==1
+```{r regressions_OOPs - final sample}
+
+# Variables by survey (50%+ have it) -- for me to check and include
+tab_var_present <- df_bothm_nontidy_weightcorrected %>% 
+  pivot_longer(c(Health,Consumption,urban,hhsize,hhead_female,hhead_married,hhead_age),names_to = "var",values_to = "value") %>% 
+  mutate(present  = !is.na(value)) %>% 
+  group_by(survey,var) %>% 
+  summarise(per_present = mean(present, na.rm = TRUE)) %>% 
+  pivot_wider(id_cols = c(survey,var), names_from = var, values_from = per_present)
+
+
+# Include household characteristics (size and urbanicity)
+model_2 <- df_regressions_bothm %>% 
+    filter(!is.na(episodic_hosp)) %$%
+  lm(HOOPs_COOPs ~ urban + hhsize + factor(survey))
+
+# Include hhead info
+model_3 <- df_regressions_bothm %>% 
+    filter(!is.na(episodic_hosp)) %$%
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+
+# Include hospitalization
+model_4 <- df_regressions_bothm %>% 
+    filter(!is.na(episodic_hosp)) %$%
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+
+tab_model( model_2, model_3, model_4,
+          robust = TRUE,
+          p.style = "asterisk",
+          title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module",
+          terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_female","hhead_married","hhead_age") ,
+          dv.labels = c("With household characteristics" , "With household head characteristics","With hospitalization"),
+          pred.labels = c("Intecept","OOPs consumption module","Urban","Household size","Female head","Married head","Age head") )
+```
+
 
 ```{r regression_noFE, echo=FALSE, warning=FALSE, message=FALSE}
 
@@ -477,43 +540,41 @@ tab_recall_reg <- tab_recall %>%
     right_join(surveys_bothmodules)
 
 df_reg2 <- df_bothm_nontidy_weightcorrected %>% 
-  left_join(tab_recall_reg)
+  left_join(tab_recall_reg) %>% 
+  filter(survey!='Bulgaria_2007') %>% 
+  filter(Health>0,Consumption>0) %>% 
+  mutate(HOOPs_COOPs = Health/Consumption)
 
-# Simple model (OOPs and nitems and recall)
-model_21 <- df_reg2 %>% 
-  filter(survey!="Bulgaria_2007") %$%
-  lm(Health ~ Consumption + diff_nitems + diff_recall )
 
 # Include household characteristics (size and urbanicity)
-model_22 <- df_reg2 %>% 
-  filter(survey!="Bulgaria_2007") %$%
-  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize )
+model_22 <- df_reg2 %$%
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize )
 
 
 # Include hhead info
-model_23 <- df_reg2 %>% 
-  filter(survey!="Bulgaria_2007") %$%  
-  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age )
+model_23 <- df_reg2 %$%  
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age )
 
 
 # Include hospitalization
-model_24 <- df_reg2 %>% 
-  filter(survey!="Bulgaria_2007") %$%  
-  lm(Health ~ Consumption + diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp )
+model_24 <- df_reg2 %$%  
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp )
 
 
-tab_model(model_21, model_22, model_23, model_24,
+tab_model(model_22, model_23, model_24,
           robust = TRUE,
           p.style = "asterisk",
           title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module (No Fixed Effects)",
           terms = c("(Intercept)","Consumption", "diff_nitems", "diff_recall", "urbanTRUE","hhsize","hhead_femaleTRUE","hhead_marriedTRUE","hhead_age","episodic_hospTRUE"),
-          dv.labels = c("Simple Model", "With household characteristics" , "With household head characteristics", "With hosp"),
+          dv.labels = c("With household characteristics" , "With household head characteristics", "With hosp"),
           pred.labels = c("Intecept","OOPs consumption module","Diff N.Items","Diff Recall (weeks)","Urban","Household size","Female head","Married head","Age head","Hospitalization in household") )
 
 
 ```
 
-```{r regressions_OOPs_Positive, echo=FALSE, warning=FALSE, message=FALSE}
+```{r regressions_OOPs_Positive, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
+
+# Leaving it out as new sample has both HOOPS and COOPS positive.
 
 # Filter positive OOPs in Health Module
 df_reg_Hpositive <- df_bothm_nontidy_weightcorrected %>% 
@@ -575,7 +636,7 @@ tab_model(model_31, model_32, model_33, model_34,model_41, model_42, model_43, m
 
 ```
 
-```{r regression_noFE_Positive, echo=FALSE, warning=FALSE, message=FALSE}
+```{r regression_noFE_Positive, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
 
 # Filter Positive Health OOPs
 df_reg5_h <- df_reg2 %>% 
@@ -638,42 +699,72 @@ tab_model(model_51, model_52, model_53, model_54,model_61, model_62, model_63, m
 ```
 
 # Models for styles
-```{r models_style, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE }
+
+```{r regression-styles, echo=FALSE, message=FALSE, eval=FALSE}
+
+# Data frame to use
+df_reg_health <- df_nontidy %>%
+   left_join(surveys_nohhweight_all) %>% 
+  mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>% # Give weight 1 to surveys withoyut hhweights
+  select(hhid_compilation, Health, survey, nonhealth_consumption, hhweight) %>% 
+  filter(Health>-1) %>%  # take NAs out 
+  group_by(survey) %>% 
+  summarise(Observations = n(),
+            `Mean Non-Health Consumption` = round( weighted.mean(nonhealth_consumption,hhweight, na.rm = TRUE),1),
+            `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1)) %>% 
+  left_join(surveys_nohhweight_all) %>%  # include again per_missing for formatting
+  mutate(`Percent OOPs Health Module` = `Mean OOPs Health Module`/`Mean Non-Health Consumption`) %>% 
+  left_join(table_descriptive2_wide)
+
+
+
+# Model a - only recall and length
+model_a <- df_reg_health %$% 
+  lm(`Mean OOPs Health Module` ~ + `Avg. Recall Health Module`)
+
+# Model b - include the styles
+model_b <- df_reg_health %$% 
+  lm(`Mean OOPs Health Module` ~ + `Avg. Recall Health Module`+ n_episodic + n_utilization + n_direct)
+
+
+
+tab_model(model_a, model_b,
+          robust = TRUE,
+          p.style = "asterisk",
+          title = "Regression Models: Effect of style on mean of surveys")
+
+```
+
+```{r style_micro , echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE }
+
 
 # DF with data and style characteristics
 df_styles <- df_nontidy %>% left_join(table_descriptive2_wide)
 df_styles <- df_styles %>% 
-  mutate_at(c("Percent_episodic","Percent_hosp","Percent_direct","Percent_utilization","Percent_trad"),funs(replace_na(.,0)))
-
-df_styles %>% 
-  select(survey,Percent_direct,Percent_episodic,Percent_hosp,Percent_trad,Percent_utilization) %>% 
-  distinct()
-
+  mutate_at(c("n_episodic","n_direct","n_utilization"),funs(replace_na(.,0))) %>% 
+  mutate(Health_nonhealth = Health_nonhealth*100)
 
 # Run model - effect of styles: only styles
 model_71 <- df_styles %$%  
-  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad)
+  lm(Health_nonhealth ~ n_episodic + n_utilization + n_direct)
 
 
 # Model 2 include n-items and recall period
 model_72 <- df_styles %$%  
-  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad + `Items Health Module` + `Avg. Recall Health Module`)
+  lm(Health_nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module`)
 
 
 # Model 3 include household characteristics
 model_73 <- df_styles %$%  
-  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad + `Items Health Module` + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age)
+  lm(Health_nonhealth ~  n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age)
 
 # Model 4 include hospitalization
 model_74 <- df_styles %$%  
-  lm(Health ~ Percent_episodic + Percent_utilization + Percent_direct + Percent_hosp + Percent_trad + `Items Health Module` + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age + episodic_hosp)
-
-
+  lm(Health_nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age + episodic_hosp)
 
 tab_model(model_71, model_72, model_73, model_74,
           robust = TRUE,
           p.style = "asterisk")
-
 
 
 ```
@@ -1124,11 +1215,6 @@ per_concordance3 <- tab_per_hosp %>%
   kable_styling(bootstrap_options = c("striped", "hover")) %>% 
     footnote(general = "The columns represent the percentage of hospitalized households (at least one member declared an hospitalization). Recall period in weeks.")
 ```
-
-
-
-
-
 
 
 
