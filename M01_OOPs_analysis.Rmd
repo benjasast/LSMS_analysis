@@ -19,6 +19,8 @@ library(bookdown)
 library(sandwich)
 library(lmtest) # for coeftest() 
 library(sjPlot)
+library(pscl)
+
 
 library(cowplot)
 
@@ -468,21 +470,21 @@ tab_var_present <- df_bothm_nontidy_weightcorrected %>%
   pivot_wider(id_cols = c(survey,var), names_from = var, values_from = per_present)
 
 df_regressions_bothm <- df_bothm_nontidy_weightcorrected %>% 
-  filter(survey!="Bulgaria_2007") %>% 
   filter(Health>0,Consumption>0) %>% 
-  mutate(HOOPs_COOPs = Health/Consumption)
+  mutate(HOOPs_COOPs = Health/Consumption,
+         survey = factor(survey))
 
 # Include household characteristics (size and urbanicity)
 model_2 <- df_regressions_bothm %$%
-  lm(HOOPs_COOPs ~ urban + hhsize + factor(survey))
+  lm(HOOPs_COOPs ~ urban + hhsize + survey)
 
 # Include hhead info
 model_3 <- df_regressions_bothm %$% 
-  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + survey)
 
 # Include hospitalization
 model_4 <- df_regressions_bothm %$% 
-  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + factor(survey))
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + survey)
 
 tab_model(model_2, model_3, model_4,
           robust = TRUE,
@@ -490,11 +492,12 @@ tab_model(model_2, model_3, model_4,
           title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module",
           terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_female","hhead_married","hhead_age", "episodic_hospTRUE") ,
           dv.labels = c("With household characteristics" , "With household head characteristics","With hospitalization"),
-          pred.labels = c("Intecept","OOPs consumption module","Urban","Household size","Female head","Married head","Age head", "Hospitalization in household") )
+          pred.labels = c("Intecept","OOPs consumption module","Urban","Household size","Female head","Married head","Age head", "Hospitalization in household"),
+          file = 'model_FE.doc')
 
 ```
 
-Same but for final sample HOSP==1
+Same but for final sample HOSP==!is.na()
 ```{r regressions_OOPs - final sample}
 
 # Variables by survey (50%+ have it) -- for me to check and include
@@ -506,28 +509,31 @@ tab_var_present <- df_bothm_nontidy_weightcorrected %>%
   pivot_wider(id_cols = c(survey,var), names_from = var, values_from = per_present)
 
 
+# Get the final sample
+df_finalsample <- df_regressions_bothm[-model_4$na.action,]
+
 # Include household characteristics (size and urbanicity)
-model_2 <- df_regressions_bothm %>% 
+model_2 <- df_finalsample %>% 
     filter(!is.na(episodic_hosp)) %$%
-  lm(HOOPs_COOPs ~ urban + hhsize + factor(survey))
+  lm(HOOPs_COOPs ~ urban + hhsize + survey)
 
 # Include hhead info
-model_3 <- df_regressions_bothm %>% 
+model_3 <- df_finalsample %>% 
     filter(!is.na(episodic_hosp)) %$%
-  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + survey)
 
 # Include hospitalization
-model_4 <- df_regressions_bothm %>% 
+model_4 <- df_finalsample %>% 
     filter(!is.na(episodic_hosp)) %$%
-  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + factor(survey))
+  lm(HOOPs_COOPs ~ urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + survey)
 
 tab_model( model_2, model_3, model_4,
           robust = TRUE,
           p.style = "asterisk",
           title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module",
-          terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_female","hhead_married","hhead_age") ,
+          terms = c("(Intercept)","Consumption","urbanTRUE","hhsize","hhead_female","hhead_married","hhead_age","episodic_hospTRUE") ,
           dv.labels = c("With household characteristics" , "With household head characteristics","With hospitalization"),
-          pred.labels = c("Intecept","OOPs consumption module","Urban","Household size","Female head","Married head","Age head") )
+          file = 'model_FE_finalsample.doc')
 ```
 
 
@@ -539,9 +545,12 @@ tab_recall_reg <- tab_recall %>%
          diff_recall = recall_Health - recall_Consumption) %>% 
     right_join(surveys_bothmodules)
 
+# Correct number of items
 df_reg2 <- df_bothm_nontidy_weightcorrected %>% 
   left_join(tab_recall_reg) %>% 
-  filter(survey!='Bulgaria_2007') %>% 
+  inner_join(table_descriptive2_wide) %>% 
+  mutate(nitems_Health = n_episodic + n_utilization + n_direct) %>% 
+  mutate(diff_nitems = nitems_Health - nitems_Consumption) %>% 
   filter(Health>0,Consumption>0) %>% 
   mutate(HOOPs_COOPs = Health/Consumption)
 
@@ -550,27 +559,80 @@ df_reg2 <- df_bothm_nontidy_weightcorrected %>%
 model_22 <- df_reg2 %$%
   lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize )
 
-
 # Include hhead info
 model_23 <- df_reg2 %$%  
   lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age )
-
 
 # Include hospitalization
 model_24 <- df_reg2 %$%  
   lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp )
 
+# Include interactions for hospitalization and instruments
+model_25 <- df_reg2 %$%  
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + episodic_hosp:diff_nitems + episodic_hosp:diff_recall)
 
-tab_model(model_22, model_23, model_24,
+# Full interaction
+model_26 <- df_reg2 %$%  
+  lm(HOOPs_COOPs ~ diff_nitems*diff_recall*episodic_hosp + urban + hhsize +hhead_female +hhead_married +hhead_age)
+
+
+
+tab_model(model_22, model_23, model_24,model_25,model_26,
           robust = TRUE,
           p.style = "asterisk",
           title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module (No Fixed Effects)",
-          terms = c("(Intercept)","Consumption", "diff_nitems", "diff_recall", "urbanTRUE","hhsize","hhead_femaleTRUE","hhead_marriedTRUE","hhead_age","episodic_hospTRUE"),
-          dv.labels = c("With household characteristics" , "With household head characteristics", "With hosp"),
-          pred.labels = c("Intecept","OOPs consumption module","Diff N.Items","Diff Recall (weeks)","Urban","Household size","Female head","Married head","Age head","Hospitalization in household") )
+          dv.labels = c("With household characteristics" , "With household head characteristics", "With hosp","with hosp and interactions","full interactions"),
+          pred.labels = c("Intecept","OOPs consumption module","Diff N.Items","Diff Recall (weeks)","Urban","Household size","Female head","Married head","Age head","Hospitalization in household"),
+          file = 'model_noFE.doc')
 
 
 ```
+
+
+
+```{r regression_noFE_finalsample, echo=FALSE, warning=FALSE, message=FALSE}
+
+df2_finalsample <- df_reg2[-model_26$na.action,]
+
+# Include household characteristics (size and urbanicity)
+model_22 <- df2_finalsample %$%
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize )
+
+# Include hhead info
+model_23 <- df2_finalsample %$%  
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age )
+
+# Include hospitalization
+model_24 <- df2_finalsample %$%  
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp )
+
+# Include interactions for hospitalization and instruments
+model_25 <- df2_finalsample %$%  
+  lm(HOOPs_COOPs ~ diff_nitems + diff_recall + urban + hhsize +hhead_female +hhead_married +hhead_age + episodic_hosp + episodic_hosp:diff_nitems + episodic_hosp:diff_recall)
+
+# Full interaction
+model_26 <- df2_finalsample %$%  
+  lm(HOOPs_COOPs ~ diff_nitems*diff_recall*episodic_hosp + urban + hhsize +hhead_female +hhead_married +hhead_age)
+
+
+
+tab_model(model_22, model_23, model_24,model_25,model_26,
+          robust = TRUE,
+          p.style = "asterisk",
+          title = "Regression Models: OOPs in health module (DV), and OOPs in consumption module (No Fixed Effects)",
+          dv.labels = c("With household characteristics" , "With household head characteristics", "With hosp","with hosp and interactions","full interactions"),
+          pred.labels = c("Intecept","OOPs consumption module","Diff N.Items","Diff Recall (weeks)","Urban","Household size","Female head","Married head","Age head","Hospitalization in household"),
+          file = 'model_noFE_finalsample.doc')
+
+
+```
+
+
+
+
+
+
+
 
 ```{r regressions_OOPs_Positive, echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE}
 
@@ -700,7 +762,7 @@ tab_model(model_51, model_52, model_53, model_54,model_61, model_62, model_63, m
 
 # Models for styles
 
-```{r regression-styles, echo=FALSE, message=FALSE, eval=FALSE}
+```{r regression-styles_macro, echo=FALSE, message=FALSE}
 
 # Data frame to use
 df_reg_health <- df_nontidy %>%
@@ -714,58 +776,97 @@ df_reg_health <- df_nontidy %>%
             `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1)) %>% 
   left_join(surveys_nohhweight_all) %>%  # include again per_missing for formatting
   mutate(`Percent OOPs Health Module` = `Mean OOPs Health Module`/`Mean Non-Health Consumption`) %>% 
-  left_join(table_descriptive2_wide)
-
+  inner_join(table_descriptive2_wide) %>% 
+  mutate_at(c("n_episodic","n_direct","n_utilization"),funs(replace_na(.,0)))
 
 
 # Model a - only recall and length
 model_a <- df_reg_health %$% 
-  lm(`Mean OOPs Health Module` ~ + `Avg. Recall Health Module`)
+  lm(`Percent OOPs Health Module` ~ `Avg. Recall Health Module`)
 
 # Model b - include the styles
 model_b <- df_reg_health %$% 
-  lm(`Mean OOPs Health Module` ~ + `Avg. Recall Health Module`+ n_episodic + n_utilization + n_direct)
-
-
+  lm(`Percent OOPs Health Module` ~  `Avg. Recall Health Module`+ n_episodic + n_utilization + n_direct)
 
 tab_model(model_a, model_b,
           robust = TRUE,
           p.style = "asterisk",
-          title = "Regression Models: Effect of style on mean of surveys")
+          title = "Regression Models: Effect of style on survey average of HOOPs/Non-health consumption",
+          file = 'reg_styles_macro.doc')
 
 ```
 
-```{r style_micro , echo=FALSE, warning=FALSE, message=FALSE, eval=FALSE }
-
+```{r regression-styles_micro , echo=FALSE, warning=FALSE, message=FALSE}
 
 # DF with data and style characteristics
-df_styles <- df_nontidy %>% left_join(table_descriptive2_wide)
-df_styles <- df_styles %>% 
+df_styles <- df_nontidy %>% left_join(table_descriptive2_wide) %>% 
   mutate_at(c("n_episodic","n_direct","n_utilization"),funs(replace_na(.,0))) %>% 
-  mutate(Health_nonhealth = Health_nonhealth*100)
+  mutate(HOOPS_Nonhealth = (Health/nonhealth_consumption)*100 )
 
 # Run model - effect of styles: only styles
 model_71 <- df_styles %$%  
-  lm(Health_nonhealth ~ n_episodic + n_utilization + n_direct)
-
+  lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct)
 
 # Model 2 include n-items and recall period
 model_72 <- df_styles %$%  
-  lm(Health_nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module`)
-
+  lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module`)
 
 # Model 3 include household characteristics
 model_73 <- df_styles %$%  
-  lm(Health_nonhealth ~  n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age)
+  lm(HOOPS_Nonhealth ~  n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age)
 
 # Model 4 include hospitalization
 model_74 <- df_styles %$%  
-  lm(Health_nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age + episodic_hosp)
+  lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age + episodic_hosp)
 
 tab_model(model_71, model_72, model_73, model_74,
           robust = TRUE,
-          p.style = "asterisk")
+          p.style = "asterisk",
+          file = 'reg_styles_micro.doc')
+```
 
+```{r regression-styles_micro_twopartm , echo=FALSE, warning=FALSE, message=FALSE}
+## TODO IN STATA ##
+```
+
+
+# Inequality - Kakwani index
+
+```{r kak_index}
+library(IC2)
+
+# Calculate GINIs for all surveys
+survey_both_list <- df_regressions_bothm %>% 
+  select(survey) %>% 
+  distinct()
+
+get_all_ginis <- function(survey_name){
+  
+  survey_name <- as.character(survey_name)
+  
+  aux_df <- df_regressions_bothm %>% 
+    filter(survey==survey_name)
+  
+  gini_nonhealth <-  aux_df %$% calcSGini(nonhealth_consumption,hhweight)
+  gini_HOOPs <-  aux_df %$% calcSGini(Health,hhweight)
+  gini_COOPs <-  aux_df %$% calcSGini(Consumption,hhweight)
+  
+  df <- tibble(survey = survey_name,
+               Gini_nonhealth = gini_nonhealth$ineq$index,
+               Gini_HOOPs = gini_HOOPs$ineq$index,
+               Gini_COOPs = gini_COOPs$ineq$index)
+  df
+}
+
+tab_kakwani_index <- map(survey_both_list$survey,get_all_ginis) %>% 
+  reduce(full_join) %>% 
+  mutate(Kakwani_Index_HOOPs = Gini_nonhealth - Gini_HOOPs,
+         Kakwani_Index_COOPs = Gini_nonhealth - Gini_COOPs)
+
+# Export
+write.csv(tab_kakwani_index, 'kakwani_index_HOOPs_COOPs.csv')
+
+tab_kakwani_index %>% kable()
 
 ```
 
