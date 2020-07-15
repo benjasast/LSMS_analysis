@@ -4,7 +4,7 @@
 library(tidyverse)
 library(magrittr)
 library(dplyr)
-library(WDI)
+library(wbstats)
 
 
 rm(list=ls())
@@ -40,8 +40,12 @@ survey_country_list
 # Grab inflation and PPP ---------------------------------------------------------
 
 country_codes <- c("BG","BA","AL","UG","NG","TZ","MW","IQ","GH","ET")
-ppp_inflation <- WDI(country=country_codes, indicator = c("PA.NUS.PPP","FP.CPI.TOTL"),
-    start = 1988)
+
+ppp_inflation <- wb(country = country_codes,indicator = c("PA.NUS.PPP","FP.CPI.TOTL"), startdate = 1988, enddate = 2020,
+                    return_wide = TRUE)
+
+ppp_inflation <- ppp_inflation %>% 
+  rename(year = date)
 
 # Grab 2011 inflation
 tab_adjustment <- ppp_inflation %>% 
@@ -53,7 +57,8 @@ tab_adjustment <- ppp_inflation %>%
   select(country,year,cpi,`PA.NUS.PPP`) %>% 
   mutate(adjustment = `PA.NUS.PPP`/cpi,
          country = ifelse(country=="Bosnia and Herzegovina","Bosnia",country)) %>% 
-  as_tibble()
+  as_tibble() %>% 
+  mutate(year = year %>% as.double())
 
 tab_adjustment
 
@@ -82,8 +87,8 @@ tab_adjustment <- adjustment_ready %>%
 df_tidy_adjusted <- df_tidy %>% left_join(tab_adjustment, by="survey") %>% 
   mutate_at(c("food_consumption","nonsub_consumption","nonhealth_consumption","nonfood_nohealth_consumption","oops"),funs(. /adjustment)) 
 
-# Make manual adjustments -------------------------------------------------
 
+# Make manual adjustments -------------------------------------------------
 
 # Fixes for Iraq (survey measured in 1000s)
 df_iraq_adjusted <- df_tidy_adjusted %>% 
@@ -167,17 +172,26 @@ df_bosnia2001_adjusted <- adjustment_ready %>%
 df_bosnia2001_adjusted %>% group_by(survey,module) %>% 
   summarise(mean_oops = mean(oops, na.rm = TRUE))
 
+df_albania_2005_adjusted <- adjustment_ready %>% 
+  filter(survey=="Albania_2005") %>% 
+  mutate(adjustment = 10) %>% # numbers are in new leek - so we are dividing by 10
+  left_join(df_tidy, by="survey") %>% 
+  mutate_at(c("food_consumption","nonsub_consumption","nonhealth_consumption","nonfood_nohealth_consumption","oops"),funs(. /adjustment)) 
+  
+df_albania_2005_adjusted %>% group_by(survey,module) %>% 
+  summarise(mean_oops = mean(oops, na.rm = TRUE))
+
 
 # Put adjustments into main df --------------------------------------------
 
 corrected_surveys <- c("Bosnia_2001","Bosnia_2004",
                        "Ghana_1988","Ghana_1989","Ghana_1991","Ghana_2006",
-                       "Iraq_2007","Iraq_2012")
+                       "Iraq_2007","Iraq_2012",'Albania_2005')
 
 # Put all corrected surveys in one tibble
 list_corrected_surveys <- list(df_bosnia2001_adjusted,df_bosnia2004_adjusted,
                                df_ghana1988_adjusted,df_ghana1989_adjusted,df_ghana1991_adjusted,df_ghana2006_adjusted,
-                               df_iraq_adjusted) %>% reduce(full_join)
+                               df_iraq_adjusted,df_albania_2005_adjusted) %>% reduce(full_join)
 
 # Eliminate from adjusted dataset all corrected surveys
 '%notin%' <- Negate('%in%')
@@ -187,13 +201,7 @@ df_adjusted_well <- df_tidy_adjusted %>%
 
 # Join corrected surveys to adjusted dataset
 df_adjusted_well <- df_adjusted_well %>% 
-  full_join(list_corrected_surveys)
-
-# Check
-tab <- df_adjusted_well %>% 
-  group_by(survey, module) %>% 
-  summarise(mean_oops = mean(oops, na.rm = TRUE)) %>% 
-  mutate(mean_oops = mean_oops %>% round(2) )
+  full_join(list_corrected_surveys) 
 
 
 # Save Adjusted Df --------------------------------------------------------
@@ -214,10 +222,26 @@ df_nontidy_adjusted <- df_tidy_adjusted %>%
   ungroup() %>% 
   distinct()
 
+
+
+# QC ----------------------------------------------------------------------
+
+# Check
+tab <- df_adjusted_well %>% 
+  group_by(survey, module) %>% 
+  summarise(mean_oops = mean(oops, na.rm = TRUE)) %>% 
+  mutate(mean_oops = mean_oops %>% round(2) )
+
+
 # Check - good
 tab2 <- df_nontidy_adjusted %>% group_by(survey) %>% 
   summarise(Health = mean(Health, na.rm = TRUE),
             Consumption = mean(Consumption, na.rm = TRUE))
+
+
+# Export ------------------------------------------------------------------
+
+
 
 # Tidy adjusted
 saveRDS(df_tidy_adjusted, file = "LSMScompilation_tidy_PPPadjusted")

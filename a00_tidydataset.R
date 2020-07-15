@@ -21,8 +21,8 @@ df <- read_csv("/Users/bsastrakinsky/Dropbox/LSMS_Compilation/Analysis/Output_Fi
                                 hhweight = col_double(),
                                 hhsize = col_double(),
                                 episodic_hosp = col_logical(),
-                                urban = col_logical(
-                                )))
+                                urban = col_logical()
+                                ))
 
 
 # Make Tidy -----------------------------------------------------------

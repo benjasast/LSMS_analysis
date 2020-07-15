@@ -69,7 +69,8 @@ hhid_fail_criteria1 <- df_money_tidy %>%
 df_money_criteria1 <- df_money_tidy %>% 
   anti_join(hhid_fail_criteria1)
 
-
+  
+  
 # Criteria 2 --------------------------------------------------------------
 
 # Eliminate absurb amounts spent on health: PPP USD 30,000 limit
@@ -123,7 +124,6 @@ tab2 <- df_money_criteria2 %>%
   group_by(survey) %>% 
   count()
 
-tab2
 
 
 # Save results ------------------------------------------------------------

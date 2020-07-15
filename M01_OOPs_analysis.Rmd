@@ -149,12 +149,17 @@ table_descriptive2_wide <- long_descriptive2 %>%
 obs2 <- df_nontidy %>%
    left_join(surveys_nohhweight_all) %>% 
   mutate(hhweight = ifelse(per_missing==1,1,hhweight)) %>% # Give weight 1 to surveys withoyut hhweights
-  select(hhid_compilation, Health, survey, nonhealth_consumption, hhweight) %>% 
-  filter(Health>-1) %>%  # take NAs out 
+  select(hhid_compilation, Health, survey, nonhealth_consumption, hhweight,urban, hhsize,hhead_female,hhead_age,episodic_hosp) %>% 
+  filter(Health>-1) %>%   # take NAs out 
   group_by(survey) %>% 
   summarise(Observations = n(),
             `Mean Non-Health Consumption` = round( weighted.mean(nonhealth_consumption,hhweight, na.rm = TRUE),1),
-            `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1)) %>% 
+            `Mean OOPs Health Module` = round( weighted.mean(Health,hhweight, na.rm = TRUE),1),
+            mean_urban = round(weighted.mean(urban,hhweight,na.rm = TRUE),2),
+            mean_hhsize = round(weighted.mean(hhsize,hhweight,na.rm = TRUE),2),
+            mean_hhead_female = round(weighted.mean(hhead_female,hhweight,na.rm = TRUE),2),
+            mean_hhead_age = round(weighted.mean(hhead_age,hhweight,na.rm = TRUE),2),
+            mean_episodic_hosp = round(weighted.mean(episodic_hosp,hhweight,na.rm = TRUE),2) ) %>% 
   left_join(surveys_nohhweight_all) %>%  # include again per_missing for formatting
   rename(Survey = survey)
 
@@ -177,7 +182,19 @@ tab2_descriptive <- table_descriptive2_wide %>%
 tab2_descriptive_export <- tab2_descriptive %>% 
   arrange(survey)
 
-write.csv(tab2_descriptive_export,'tab_onlyhealthmodule.csv')
+# Export to excel separated by those with bothm and does that do not
+tab2_descriptive_export_bothm <- tab2_descriptive %>% 
+  inner_join(surveys_bothmodules) %>% 
+  arrange(survey)
+
+tab2_descriptive_export_onem <- tab2_descriptive %>% 
+  anti_join(surveys_bothmodules) %>% 
+  arrange(survey)
+
+write.csv(tab2_descriptive_export_bothm,'tab_descriptive_surveys_bothm.csv')
+write.csv(tab2_descriptive_export_onem,'tab2_descriptive_surveys_onem.csv')
+
+
 
 
 # Table
@@ -222,6 +239,7 @@ obs <- df_bothm_nontidy %>%
             `Mean OOPs Consumption Module`  = round( weighted.mean(Consumption,hhweight, na.rm = TRUE),1)) %>% 
   ungroup() %>% 
   mutate(`Percent HOOPs/COOPs` = round(`Mean OOPs Health Module`/`Mean OOPs Consumption Module`,2) ) %>% 
+  mutate(COOPs_nonhealth = `Mean OOPs Consumption Module` / `Mean Non-Health Consumption`) %>% 
   left_join(surveys_nohhweight) %>%  # include again per_missing for formatting
   rename(Survey = survey)
 
@@ -762,7 +780,7 @@ tab_model(model_51, model_52, model_53, model_54,model_61, model_62, model_63, m
 
 # Models for styles
 
-```{r regression-styles_macro, echo=FALSE, message=FALSE}
+```{r regression-styles_macro, echo=FALSE}
 
 # Data frame to use
 df_reg_health <- df_nontidy %>%
@@ -788,6 +806,7 @@ model_a <- df_reg_health %$%
 model_b <- df_reg_health %$% 
   lm(`Percent OOPs Health Module` ~  `Avg. Recall Health Module`+ n_episodic + n_utilization + n_direct)
 
+
 tab_model(model_a, model_b,
           robust = TRUE,
           p.style = "asterisk",
@@ -795,6 +814,9 @@ tab_model(model_a, model_b,
           file = 'reg_styles_macro.doc')
 
 ```
+
+
+
 
 ```{r regression-styles_micro , echo=FALSE, warning=FALSE, message=FALSE}
 
@@ -825,6 +847,10 @@ tab_model(model_71, model_72, model_73, model_74,
           file = 'reg_styles_micro.doc')
 ```
 
+
+
+
+
 ```{r regression-styles_micro_twopartm , echo=FALSE, warning=FALSE, message=FALSE}
 ## TODO IN STATA ##
 ```
@@ -832,7 +858,7 @@ tab_model(model_71, model_72, model_73, model_74,
 
 # Inequality - Kakwani index
 
-```{r kak_index}
+```{r kak_index, echo=FALSE, warning=FALSE}
 library(IC2)
 
 # Calculate GINIs for all surveys
@@ -865,7 +891,6 @@ tab_kakwani_index <- map(survey_both_list$survey,get_all_ginis) %>%
 
 # Export
 write.csv(tab_kakwani_index, 'kakwani_index_HOOPs_COOPs.csv')
-
 tab_kakwani_index %>% kable()
 
 ```
