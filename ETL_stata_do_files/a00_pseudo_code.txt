@@ -1,0 +1,26 @@
+*******************************************************************************
+		*** LSMS Compilation of Consumption ****
+*******************************************************************************
+* Authors: Karen Grépin, Benjamin Sas Trakinsky
+* 08/04/19
+*******************************************************************************		
+
+*-------------------------------------------------------------------------------------*
+*1.0. Grab Variables and Datasets
+*-------------------------------------------------------------------------------------*
+
+- In a first stage, We want to identify in which .dta's the consumption information is held for each LSMS.
+
+- Then we want to identify where the episodic health information is contained for each LSMS.
+
+- List of assets and household characteristics for wealth quintiles.
+
+*-------------------------------------------------------------------------------------*
+*2.0. Compile numbers
+*-------------------------------------------------------------------------------------*
+
+- We want to make all numbers annual estimates of consumption.
+
+- Episodic data will be classified according to its recall period.
+
+
