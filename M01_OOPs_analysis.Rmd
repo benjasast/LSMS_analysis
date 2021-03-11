@@ -797,6 +797,18 @@ df_reg_health <- df_nontidy %>%
   inner_join(table_descriptive2_wide) %>% 
   mutate_at(c("n_episodic","n_direct","n_utilization"),funs(replace_na(.,0)))
 
+# Add data on number of food and non-food questions
+input_n_food_nonfood <- read.csv('input_numbernonfood.csv') %>% 
+  rename(n_food = `number.of.food.questions`,
+         n_nonfood = `number.of.non.food.questions`) %>% 
+  filter(n_food!='.') %>% 
+  mutate(n_food = n_food %>% as.double(),
+         n_nonfood = n_nonfood %>% as.double())
+
+
+df_reg_health <- df_reg_health %>% 
+  inner_join(input_n_food_nonfood)
+
 
 # Model a - only recall and length
 model_a <- df_reg_health %$% 
@@ -806,8 +818,12 @@ model_a <- df_reg_health %$%
 model_b <- df_reg_health %$% 
   lm(`Percent OOPs Health Module` ~  `Avg. Recall Health Module`+ n_episodic + n_utilization + n_direct)
 
+# Model c - include the styles and number of questions
+model_c <- df_reg_health %$% 
+  lm(`Percent OOPs Health Module` ~  `Avg. Recall Health Module`+ n_episodic + n_utilization + n_direct + n_food + n_nonfood)
 
-tab_model(model_a, model_b,
+
+tab_model(model_a, model_b, model_c,
           robust = TRUE,
           p.style = "asterisk",
           title = "Regression Models: Effect of style on survey average of HOOPs/Non-health consumption",
@@ -825,6 +841,10 @@ df_styles <- df_nontidy %>% left_join(table_descriptive2_wide) %>%
   mutate_at(c("n_episodic","n_direct","n_utilization"),funs(replace_na(.,0))) %>% 
   mutate(HOOPS_Nonhealth = (Health/nonhealth_consumption)*100 )
 
+# Add number of questions
+df_styles <- df_styles %>% 
+  left_join(input_n_food_nonfood)
+
 # Run model - effect of styles: only styles
 model_71 <- df_styles %$%  
   lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct)
@@ -833,15 +853,19 @@ model_71 <- df_styles %$%
 model_72 <- df_styles %$%  
   lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module`)
 
-# Model 3 include household characteristics
+# Model 3 number of food and non-food consumption questions
 model_73 <- df_styles %$%  
-  lm(HOOPS_Nonhealth ~  n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age)
+  lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + n_food + n_nonfood)
 
-# Model 4 include hospitalization
+# Model 4 include household characteristics
 model_74 <- df_styles %$%  
-  lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + hhsize +  urban + hhead_female + hhead_married + hhead_age + episodic_hosp)
+  lm(HOOPS_Nonhealth ~  n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + n_food + n_nonfood + hhsize +  urban + hhead_female + hhead_married + hhead_age)
 
-tab_model(model_71, model_72, model_73, model_74,
+# Model 5 include hospitalization
+model_75 <- df_styles %$%  
+  lm(HOOPS_Nonhealth ~ n_episodic + n_utilization + n_direct + `Avg. Recall Health Module` + n_food + n_nonfood + hhsize +  urban + hhead_female + hhead_married + hhead_age + episodic_hosp)
+
+tab_model(model_71, model_72, model_73, model_74,model_75,
           robust = TRUE,
           p.style = "asterisk",
           file = 'reg_styles_micro.doc')
@@ -891,7 +915,6 @@ tab_kakwani_index <- map(survey_both_list$survey,get_all_ginis) %>%
 
 # Export
 write.csv(tab_kakwani_index, 'kakwani_index_HOOPs_COOPs.csv')
-tab_kakwani_index %>% kable()
 
 ```
 

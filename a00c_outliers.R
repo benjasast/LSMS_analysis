@@ -107,10 +107,47 @@ df_money_criteria2 <- df_money_criteria1 %>%
   anti_join(hhid_fail_criteria2)
 
 
+
+# Criteria 3 - Eliminate absurb non-health consumption --------------------
+
+
+# Boxplot for nonhealth
+# df_money_criteria2 %>% 
+#   filter(money_var=='nonhealth_consumption') %>% 
+#   ggplot(aes(money_var,value)) +
+#   geom_boxplot(aes(color=money_var)) +
+#   facet_wrap(~survey, scales = "free")
+
+
+# Eliminate absurb amounts spent on non-health: PPP USD 300,000 limit
+criteria3 <- 300000
+
+# Table with number of observations failing criteria 1 per survey
+n_fail_criteria3_bysurvey <- df_money_tidy %>% 
+  filter(money_var=='nonhealth_consumption') %>% 
+  filter(value>criteria3) %>% 
+  select(hhid_compilation, survey) %>% 
+  distinct() %>% 
+  group_by(survey) %>% 
+  count()
+
+
+# Grab hhid of failing obs
+hhid_fail_criteria3 <- df_money_tidy %>% 
+  filter(money_var=='nonhealth_consumption') %>% 
+  filter(value>criteria3) %>% 
+  select(hhid_compilation) %>% 
+  distinct()
+
+# Create DF complying with criteria 3
+df_money_criteria2 <- df_money_criteria1 %>% 
+  anti_join(hhid_fail_criteria3)
+
+
 # Check means -------------------------------------------------------------
 
 tab <- df_money_criteria2 %>% 
-  filter(money_var %in% c("Health","Consumption") ) %>% 
+  filter(money_var %in% c("Health","Consumption",'nonhealth_consumption') ) %>% 
   group_by(survey,money_var) %>% 
   summarise(mean = mean(value, na.rm = TRUE)) %>% 
   na.omit()
